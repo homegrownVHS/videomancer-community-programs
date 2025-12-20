@@ -95,7 +95,7 @@ All contributions are licensed under GPL-3.0.
 Reference programs in `programs/lzx/`:
 
 - **passthru** - Minimal passthrough (1 cycle latency) - use as a template
-- **yuv_amplifier** - Color amplifier with 8 controls (4 cycle latency) - demonstrates multi-stage pipeline
+- **yuv_amplifier** - Color amplifier with 8 controls (14 cycle latency) - demonstrates multi-stage pipeline
 
 ## ⚖️ License
 
