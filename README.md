@@ -1,5 +1,8 @@
 # Videomancer Community Programs
 
+[![CI](https://github.com/lzxindustries/videomancer-community-programs/workflows/CI/badge.svg)](https://github.com/lzxindustries/videomancer-community-programs/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 A community repository for FPGA-based video processing programs for the [Videomancer](https://github.com/lzxindustries/videomancer-sdk) platform.
 
 ## 🎨 What is Videomancer?
