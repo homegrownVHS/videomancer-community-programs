@@ -1,0 +1,129 @@
+# Copyright (C) 2026 Adam Pflanzer
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# VHS Degradation Program Configuration
+
+[program]
+program_id = "com.homegrownvhs.vhs"
+program_name = "VHS"
+program_version = "1.0.0"
+abi_version = ">=1.0,<2.0"
+author = "Adam Pflanzer"
+license = "GPL-3.0"
+categories = ["Glitch", "Signal", "Noise"]
+program_type = "processing"
+description = "VHS tape playback artifacts: chroma blur, noise, tracking, dropout"
+hardware_compatibility = ["rev_b"]
+core = "yuv444_30b"
+
+# Knob 1: Chroma Blur — IIR lowpass on U/V for color smearing
+[[parameter]]
+parameter_id = "rotary_potentiometer_1"
+name_label = "Chroma Blur"
+control_mode = "linear"
+display_min_value = 0
+display_max_value = 100
+initial_value = 512
+display_float_digits = 1
+suffix_label = "%"
+
+# Knob 2: Noise — overall noise level added to signal
+[[parameter]]
+parameter_id = "rotary_potentiometer_2"
+name_label = "Noise"
+control_mode = "linear"
+display_min_value = 0
+display_max_value = 100
+initial_value = 256
+display_float_digits = 1
+suffix_label = "%"
+
+# Knob 3: Tracking — horizontal jitter magnitude per scanline
+[[parameter]]
+parameter_id = "rotary_potentiometer_3"
+name_label = "Tracking"
+control_mode = "linear"
+display_min_value = 0
+display_max_value = 100
+initial_value = 0
+display_float_digits = 1
+suffix_label = "%"
+
+# Knob 4: Head Switch — noise band size at bottom/top of frame
+[[parameter]]
+parameter_id = "rotary_potentiometer_4"
+name_label = "Head Switch"
+control_mode = "linear"
+display_min_value = 0
+display_max_value = 100
+initial_value = 128
+display_float_digits = 1
+suffix_label = "%"
+
+# Knob 5: Dropout — probability of random scanline dropouts
+[[parameter]]
+parameter_id = "rotary_potentiometer_5"
+name_label = "Dropout"
+control_mode = "linear"
+display_min_value = 0
+display_max_value = 100
+initial_value = 64
+display_float_digits = 1
+suffix_label = "%"
+
+# Knob 6: Color Loss — desaturation amount (tape aging)
+[[parameter]]
+parameter_id = "rotary_potentiometer_6"
+name_label = "Color Loss"
+control_mode = "linear"
+display_min_value = 0
+display_max_value = 100
+initial_value = 0
+display_float_digits = 1
+suffix_label = "%"
+
+# Switch 7: Tracking Mode — random per-line vs concentrated band
+[[parameter]]
+parameter_id = "toggle_switch_7"
+name_label = "Track Mode"
+value_labels = ["Scattered", "Band"]
+initial_value_label = "Scattered"
+
+# Switch 8: Dropout Style — snow or black on dropout lines
+[[parameter]]
+parameter_id = "toggle_switch_8"
+name_label = "Drop Style"
+value_labels = ["Snow", "Black"]
+initial_value_label = "Snow"
+
+# Switch 9: Color Noise — monochrome vs color noise
+[[parameter]]
+parameter_id = "toggle_switch_9"
+name_label = "Color Noise"
+value_labels = ["Mono", "Color"]
+initial_value_label = "Mono"
+
+# Switch 10: Sync Warp — smooth raster displacement (flagging effect)
+[[parameter]]
+parameter_id = "toggle_switch_10"
+name_label = "Sync Warp"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+# Switch 11: Bypass
+[[parameter]]
+parameter_id = "toggle_switch_11"
+name_label = "Bypass"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+# Fader 12: Mix — dry/wet crossfade
+[[parameter]]
+parameter_id = "linear_potentiometer_12"
+name_label = "Mix"
+control_mode = "linear"
+display_min_value = 0
+display_max_value = 100
+initial_value = 1023
+display_float_digits = 1
+suffix_label = "%"
