@@ -1,0 +1,125 @@
+# Copyright (C) 2026 Adam Pflanzer
+# SPDX-License-Identifier: GPL-3.0-only
+#
+# Voronoi Cellular Pattern Program Configuration
+
+[program]
+program_id = "com.homegrownvhs.voronoi"
+program_name = "Voronoi"
+program_version = "1.0.0"
+abi_version = ">=1.0,<2.0"
+author = "Adam Pflanzer"
+license = "GPL-3.0"
+categories = ["Pattern", "Organic", "Edges"]
+program_type = "processing"
+description = "Voronoi cell pattern with scrolling, jitter, edge detection, and cell coloring"
+hardware_compatibility = ["rev_b"]
+core = "yuv444_30b"
+
+# --- Knobs ---
+
+# Knob 1: Scale — cell size (8 steps: 8px to 64px)
+[[parameter]]
+parameter_id = "rotary_potentiometer_1"
+name_label = "Scale"
+control_mode = "steps_8"
+initial_value = 512
+display_min_value = 1
+display_max_value = 8
+
+# Knob 2: Edge Width — distance threshold for edge effect
+[[parameter]]
+parameter_id = "rotary_potentiometer_2"
+name_label = "Edge Width"
+control_mode = "linear"
+initial_value = 256
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# Knob 3: Scroll X — horizontal animation speed
+[[parameter]]
+parameter_id = "rotary_potentiometer_3"
+name_label = "Scroll X"
+control_mode = "linear"
+initial_value = 0
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# Knob 4: Scroll Y — vertical animation speed
+[[parameter]]
+parameter_id = "rotary_potentiometer_4"
+name_label = "Scroll Y"
+control_mode = "linear"
+initial_value = 0
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# Knob 5: Jitter — randomness of cell center placement
+[[parameter]]
+parameter_id = "rotary_potentiometer_5"
+name_label = "Jitter"
+control_mode = "linear"
+initial_value = 512
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+[[parameter]]
+parameter_id = "rotary_potentiometer_6"
+name_label = "Video Drive"
+control_mode = "linear"
+initial_value = 0
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# --- Toggles ---
+
+# Switch 7: Edge Mode — smooth distance vs hard threshold
+[[parameter]]
+parameter_id = "toggle_switch_7"
+name_label = "Edge Mode"
+value_labels = ["Smooth", "Hard"]
+initial_value_label = "Smooth"
+
+# Switch 8: Cell Color — tint cells with unique hues
+[[parameter]]
+parameter_id = "toggle_switch_8"
+name_label = "Cell Color"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+# Switch 9: Invert — reverse distance mapping
+[[parameter]]
+parameter_id = "toggle_switch_9"
+name_label = "Invert"
+value_labels = ["Normal", "Inverted"]
+initial_value_label = "Normal"
+
+# Switch 10: Outline — overlay bright edges instead of multiply
+[[parameter]]
+parameter_id = "toggle_switch_10"
+name_label = "Outline"
+value_labels = ["Multiply", "Overlay"]
+initial_value_label = "Multiply"
+
+# Switch 11: Bypass
+[[parameter]]
+parameter_id = "toggle_switch_11"
+name_label = "Bypass"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+# --- Fader ---
+
+[[parameter]]
+parameter_id = "linear_potentiometer_12"
+name_label = "Mix"
+control_mode = "linear"
+initial_value = 1023
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"

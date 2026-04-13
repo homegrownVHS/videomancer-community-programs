@@ -12,7 +12,7 @@ author = "Adam Pflanzer"
 license = "GPL-3.0"
 categories = ["Glitch", "Signal", "Noise"]
 program_type = "processing"
-description = "VHS tape playback artifacts: chroma blur, noise, tracking, dropout"
+description = "VHS tape playback artifacts: chroma blur, noise, tracking, dropout, sync warp"
 hardware_compatibility = ["rev_b"]
 core = "yuv444_30b"
 
@@ -71,14 +71,14 @@ initial_value = 64
 display_float_digits = 1
 suffix_label = "%"
 
-# Knob 6: Color Loss — desaturation amount (tape aging)
+# Knob 6: Warp Speed — rate of sine-wave wobble (0 = stopped)
 [[parameter]]
 parameter_id = "rotary_potentiometer_6"
-name_label = "Color Loss"
+name_label = "Warp Speed"
 control_mode = "linear"
 display_min_value = 0
 display_max_value = 100
-initial_value = 0
+initial_value = 256
 display_float_digits = 1
 suffix_label = "%"
 

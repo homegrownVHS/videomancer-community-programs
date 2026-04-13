@@ -1,0 +1,108 @@
+[program]
+program_id = "com.homegrownvhs.lumawrap"
+program_version = "1.0.0"
+abi_version = ">=1.0,<2.0"
+program_name = "Luma Wrap"
+author = "Adam Pflanzer"
+license = "GPL-3.0"
+categories = ["Color", "Curve", "Signal"]
+program_type = "processing"
+description = "Per-channel modulo/wrap with sawtooth contour banding and sliding bit-window control"
+hardware_compatibility = ["rev_b"]
+core = "yuv444_30b"
+
+# --- Knobs ---
+
+[[parameter]]
+parameter_id = "rotary_potentiometer_1"
+name_label = "Frequency"
+control_mode = "linear"
+initial_value = 256
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+[[parameter]]
+parameter_id = "rotary_potentiometer_2"
+name_label = "Window"
+control_mode = "steps_16"
+initial_value = 512
+display_min_value = 0
+display_max_value = 10
+
+[[parameter]]
+parameter_id = "rotary_potentiometer_3"
+name_label = "Offset"
+control_mode = "linear"
+initial_value = 512
+display_min_value = -50
+display_max_value = 50
+
+[[parameter]]
+parameter_id = "rotary_potentiometer_4"
+name_label = "Fold"
+control_mode = "linear"
+initial_value = 0
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+[[parameter]]
+parameter_id = "rotary_potentiometer_5"
+name_label = "UV Detune"
+control_mode = "steps_16"
+initial_value = 0
+display_min_value = 0
+display_max_value = 10
+
+[[parameter]]
+parameter_id = "rotary_potentiometer_6"
+name_label = "Threshold"
+control_mode = "linear"
+initial_value = 0
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# --- Toggles ---
+
+[[parameter]]
+parameter_id = "toggle_switch_7"
+name_label = "Y Wrap"
+value_labels = ["Off", "On"]
+initial_value_label = "On"
+
+[[parameter]]
+parameter_id = "toggle_switch_8"
+name_label = "U Wrap"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+[[parameter]]
+parameter_id = "toggle_switch_9"
+name_label = "V Wrap"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+[[parameter]]
+parameter_id = "toggle_switch_10"
+name_label = "Invert"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+[[parameter]]
+parameter_id = "toggle_switch_11"
+name_label = "Bypass"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+# --- Fader ---
+
+[[parameter]]
+parameter_id = "linear_potentiometer_12"
+name_label = "Mix"
+control_mode = "linear"
+initial_value = 1023
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"

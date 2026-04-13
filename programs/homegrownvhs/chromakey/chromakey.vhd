@@ -1,5 +1,5 @@
--- Videomancer SDK - Open source FPGA-based video effects development kit
--- Copyright (C) 2025 LZX Industries LLC
+-- Videomancer Community Programs
+-- Copyright (C) 2026 Adam Pflanzer
 -- File: chromakey.vhd - Chroma Key Program for Videomancer
 -- License: GNU General Public License v3.0
 -- https://github.com/lzxindustries/videomancer-sdk

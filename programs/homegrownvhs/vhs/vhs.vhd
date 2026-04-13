@@ -22,10 +22,11 @@
 -- Overview:
 --   Simulates VHS tape playback artifacts: horizontal chroma blur, luma noise,
 --   horizontal tracking jitter via BRAM scanline buffer, head-switching noise
---   band at the bottom of the frame, random dropout scanlines, and color
---   desaturation. Y-only tracking jitter uses a single BRAM scanline buffer
---   to displace luma horizontally per line; chroma passes through an IIR
---   lowpass filter for the characteristic VHS color smearing.
+--   band at the bottom of the frame, random dropout scanlines, and sine-wave
+--   sync warp with adjustable speed. Y-only tracking jitter uses a single
+--   BRAM scanline buffer to displace luma horizontally per line; chroma passes
+--   through an IIR lowpass filter for the characteristic VHS color smearing.
+--   Sync warp uses a sine LUT for smooth, organic horizontal undulation.
 --
 -- Resources:
 --   5 BRAM (Y-only scanline buffer, 10-bit x 2048), ~2000 LUTs (estimated)
@@ -33,15 +34,19 @@
 -- Pipeline:
 --   Stage 0 (input reg + counters + IIR feed):  1 clock  -> T+1
 --   Stage 1 (BRAM write/read + IIR output):     1 clock  -> T+2
---   Stage 2 (BRAM output + noise + zones):       1 clock  -> T+3
---   Stage 3 (apply noise + dropout + clamp):     1 clock  -> T+4
---   Stage 4 (output register):                   1 clock  -> T+5
---   interpolator_u x3 (wet/dry mix):             4 clocks -> T+9
---   Total: 9 clocks
+--   Stage 2 (noise multiply + register):         1 clock  -> T+3
+--   Stage 2b (noise centering + zone detect):    1 clock  -> T+4
+--   Stage 3 (apply general noise + dropout):     1 clock  -> T+5
+--   Stage 3b (head-switch noise):                1 clock  -> T+6
+--   Stage 4 (output register):                   1 clock  -> T+7
+--   interpolator_u x3 (wet/dry mix):             4 clocks -> T+11
+--   Total: 11 clocks
+--   Note: p_jitter_precompute uses 2-stage pipeline (sin LUT reg + multiply)
 --
 -- Submodules:
 --   variable_filter_s x2: IIR lowpass for chroma blur, 1 cycle each
 --   lfsr16 x1: pseudo-random noise generation, free-running
+--   sin_cos_full_lut_10x10 x1: sine LUT for sync warp, combinational
 --   interpolator_u x3: linear blend for dry/wet mix, 4 clocks
 --
 -- Parameters:
@@ -50,7 +55,7 @@
 --   Pot 3  (registers_in(2)):   Tracking (horizontal jitter magnitude)
 --   Pot 4  (registers_in(3)):   Head Switch (noise band at bottom of frame)
 --   Pot 5  (registers_in(4)):   Dropout (random scanline dropout rate)
---   Pot 6  (registers_in(5)):   Color Loss (desaturation amount)
+--   Pot 6  (registers_in(5)):   Warp Speed (wobble rate, 0=stopped)
 --   Tog 7  (registers_in(6)(0)): Tracking Mode (Scattered / Band)
 --   Tog 8  (registers_in(6)(1)): Dropout Style (Snow / Black)
 --   Tog 9  (registers_in(6)(2)): Color Noise (Mono / Color)
@@ -59,8 +64,8 @@
 --   Fader  (registers_in(7)):    Mix (dry/wet)
 --
 -- Timing:
---   C_PROCESSING_DELAY_CLKS = 5 (inline stages)
---   C_SYNC_DELAY_CLKS       = 9 (total, including trailing interpolator)
+--   C_PROCESSING_DELAY_CLKS = 7 (inline stages)
+--   C_SYNC_DELAY_CLKS       = 11 (total, including trailing interpolator)
 
 --------------------------------------------------------------------------------
 
@@ -78,8 +83,8 @@ architecture vhs of program_top is
     ---------------------------------------------------------------------------
     -- Constants
     ---------------------------------------------------------------------------
-    constant C_PROCESSING_DELAY_CLKS : integer := 5;
-    constant C_SYNC_DELAY_CLKS       : integer := 9;  -- 5 + 4 (interpolator)
+    constant C_PROCESSING_DELAY_CLKS : integer := 7;
+    constant C_SYNC_DELAY_CLKS       : integer := 11; -- 7 + 4 (interpolator)
     constant C_BUF_DEPTH             : integer := 11;  -- 2048 entries
     constant C_BUF_SIZE              : integer := 2**C_BUF_DEPTH;
 
@@ -98,7 +103,7 @@ architecture vhs of program_top is
     signal s_tracking_amt   : unsigned(9 downto 0);   -- 0-1023
     signal s_head_switch    : unsigned(9 downto 0);   -- 0-1023
     signal s_dropout_rate   : unsigned(9 downto 0);   -- 0-1023
-    signal s_color_loss     : unsigned(9 downto 0);   -- 0-1023
+    signal s_warp_speed     : unsigned(5 downto 0);   -- 0-63 (phase increment per line)
     signal s_tracking_band  : std_logic;              -- 0=scattered, 1=band
     signal s_dropout_black  : std_logic;              -- 0=snow, 1=black
     signal s_color_noise    : std_logic;              -- 0=mono, 1=color
@@ -131,6 +136,8 @@ architecture vhs of program_top is
     ---------------------------------------------------------------------------
     signal s_warp_phase     : unsigned(9 downto 0) := (others => '0');
     signal s_warp_frame_ofs : unsigned(9 downto 0) := (others => '0');
+    signal s_warp_angle     : std_logic_vector(9 downto 0);
+    signal s_sin_out        : signed(9 downto 0);
 
     ---------------------------------------------------------------------------
     -- Per-line dropout flag (sampled at start of each active line)
@@ -141,6 +148,13 @@ architecture vhs of program_top is
     -- LFSR output
     ---------------------------------------------------------------------------
     signal s_lfsr_out       : std_logic_vector(15 downto 0);
+
+    ---------------------------------------------------------------------------
+    -- Pre-computed jitter products (2-stage pipeline)
+    ---------------------------------------------------------------------------
+    signal s_pre_jitter_raw  : unsigned(19 downto 0) := (others => '0');
+    signal s_warp_sine_reg   : unsigned(9 downto 0) := (others => '0');
+    signal s_pre_warp_prod   : unsigned(19 downto 0) := (others => '0');
 
     ---------------------------------------------------------------------------
     -- Stage 0 outputs
@@ -169,6 +183,17 @@ architecture vhs of program_top is
     signal s1_blur_v        : unsigned(9 downto 0) := (others => '0');
 
     ---------------------------------------------------------------------------
+    -- Stage 2a outputs (noise multiply products, before centering)
+    ---------------------------------------------------------------------------
+    signal s2a_jittered_y   : unsigned(9 downto 0) := (others => '0');
+    signal s2a_blur_u       : unsigned(9 downto 0) := (others => '0');
+    signal s2a_blur_v       : unsigned(9 downto 0) := (others => '0');
+    signal s2a_noise_raw    : unsigned(19 downto 0) := (others => '0');
+    signal s2a_uv_noise_raw : unsigned(19 downto 0) := (others => '0');
+    signal s2a_color_noise  : std_logic := '0';
+    signal s2a_dropout      : std_logic := '0';
+
+    ---------------------------------------------------------------------------
     -- Stage 2 outputs
     ---------------------------------------------------------------------------
     signal s2_jittered_y    : unsigned(9 downto 0) := (others => '0');
@@ -178,6 +203,14 @@ architecture vhs of program_top is
     signal s2_uv_noise      : signed(10 downto 0) := (others => '0');
     signal s2_in_head_zone  : std_logic := '0';
     signal s2_dropout       : std_logic := '0';
+
+    ---------------------------------------------------------------------------
+    -- Stage 3a outputs (general noise applied, before head-switch)
+    ---------------------------------------------------------------------------
+    signal s3a_y            : unsigned(9 downto 0) := (others => '0');
+    signal s3a_u            : unsigned(9 downto 0) := (others => '0');
+    signal s3a_v            : unsigned(9 downto 0) := (others => '0');
+    signal s3a_in_head_zone : std_logic := '0';
 
     ---------------------------------------------------------------------------
     -- Stage 3 outputs
@@ -258,7 +291,7 @@ begin
     s_tracking_amt   <= unsigned(registers_in(2));
     s_head_switch    <= unsigned(registers_in(3));
     s_dropout_rate   <= unsigned(registers_in(4));
-    s_color_loss     <= unsigned(registers_in(5));
+    s_warp_speed     <= unsigned(registers_in(5)(9 downto 4));  -- top 6 bits: 0-63
     s_tracking_band  <= registers_in(6)(0);
     s_dropout_black  <= registers_in(6)(1);
     s_color_noise    <= registers_in(6)(2);
@@ -277,6 +310,41 @@ begin
             load   => '0',
             q      => s_lfsr_out
         );
+
+    ---------------------------------------------------------------------------
+    -- Sine LUT for sync warp (combinational)
+    -- Angle is registered to break critical path: phase+offset → reg → LUT → reg
+    ---------------------------------------------------------------------------
+    p_warp_angle_reg : process(clk)
+    begin
+        if rising_edge(clk) then
+            s_warp_angle <= std_logic_vector(s_warp_phase + s_warp_frame_ofs);
+        end if;
+    end process p_warp_angle_reg;
+
+    u_sin_lut : entity work.sin_cos_full_lut_10x10
+        port map (
+            angle_in => s_warp_angle,
+            sin_out  => s_sin_out,
+            cos_out  => open
+        );
+
+    ---------------------------------------------------------------------------
+    -- Pre-compute jitter products (2-stage pipeline: sin LUT reg + multiply)
+    -- Stage A: register LFSR multiply + convert sine output to unsigned
+    -- Stage B: multiply registered sine value with tracking amount
+    ---------------------------------------------------------------------------
+    p_jitter_precompute : process(clk)
+    begin
+        if rising_edge(clk) then
+            -- Stage A: LFSR multiply (10x10) + register sine conversion
+            s_pre_jitter_raw <= unsigned(s_lfsr_out(9 downto 0)) * s_tracking_amt;
+            s_warp_sine_reg  <= unsigned(std_logic_vector(
+                                    s_sin_out + to_signed(511, 10)));
+            -- Stage B: warp sine multiply from registered value (10x10)
+            s_pre_warp_prod  <= s_warp_sine_reg * s_tracking_amt;
+        end if;
+    end process p_jitter_precompute;
 
     ---------------------------------------------------------------------------
     -- IIR filters for chroma blur (U and V channels)
@@ -314,14 +382,9 @@ begin
     -- Latency: 1 clock
     ---------------------------------------------------------------------------
     p_stage0 : process(clk)
-        variable v_jitter_raw   : unsigned(25 downto 0);  -- 16-bit lfsr * 10-bit tracking
         variable v_jitter_shift : unsigned(C_BUF_DEPTH - 1 downto 0);
         variable v_band_dist    : unsigned(9 downto 0);
-        variable v_tracking_scaled : unsigned(9 downto 0);
-        variable v_warp_combined : unsigned(9 downto 0);
-        variable v_warp_triangle : unsigned(9 downto 0);
-        variable v_warp_product  : unsigned(19 downto 0);  -- 10-bit * 10-bit
-        variable v_warp_offset   : unsigned(C_BUF_DEPTH - 1 downto 0);
+        variable v_warp_offset  : unsigned(C_BUF_DEPTH - 1 downto 0);
     begin
         if rising_edge(clk) then
             -- Register input data
@@ -354,19 +417,19 @@ begin
                                   + resize(unsigned(s_lfsr_out(4 downto 0)), 10);
             elsif data_in.hsync_n = '0' and s_prev_hsync_n = '1' then
                 s_line_count <= s_line_count + 1;
-                -- Advance warp phase per line (~2 undulations per field)
-                s_warp_phase <= s_warp_phase + 8;
+                -- Advance warp phase per line (speed controlled by knob 6)
+                s_warp_phase <= s_warp_phase + resize(s_warp_speed, 10);
             end if;
 
             -- Per-line jitter: sample at avid rising edge
+            -- Uses pre-registered multiply products (no inline multiplies)
             if data_in.avid = '1' and s_prev_avid = '0' then
-                -- Compute base jitter from tracking mode
+                -- Compute base jitter from pre-registered tracking product
                 v_jitter_shift := (others => '0');
                 if s_tracking_amt /= 0 then
                     if s_tracking_band = '0' then
-                        -- Scattered mode: every line gets random jitter
-                        v_jitter_raw := unsigned(s_lfsr_out) * s_tracking_amt;
-                        v_jitter_shift := v_jitter_raw(25 downto 25 - C_BUF_DEPTH + 1);
+                        -- Scattered mode: use pre-registered product
+                        v_jitter_shift := s_pre_jitter_raw(19 downto 19 - C_BUF_DEPTH + 1);
                     else
                         -- Band mode: only lines near band position get jitter
                         if s_line_count >= s_band_pos then
@@ -376,28 +439,15 @@ begin
                         end if;
                         -- Within ~32 lines of band center: apply jitter
                         if v_band_dist < 32 then
-                            v_tracking_scaled := s_tracking_amt;
-                            v_jitter_raw := unsigned(s_lfsr_out)
-                                          * v_tracking_scaled;
-                            v_jitter_shift := v_jitter_raw(25 downto 25 - C_BUF_DEPTH + 1);
+                            v_jitter_shift := s_pre_jitter_raw(19 downto 19 - C_BUF_DEPTH + 1);
                         end if;
                     end if;
                 end if;
 
-                -- Compute sync warp: smooth triangle-wave displacement
+                -- Sync warp: use pre-registered warp product
                 v_warp_offset := (others => '0');
                 if s_sync_warp = '1' and s_tracking_amt /= 0 then
-                    v_warp_combined := s_warp_phase + s_warp_frame_ofs;
-                    -- Triangle wave: ramp up 0→1023 then fold back
-                    if v_warp_combined(9) = '0' then
-                        v_warp_triangle := v_warp_combined(8 downto 0) & '0';
-                    else
-                        v_warp_triangle := (to_unsigned(511, 9)
-                                          - v_warp_combined(8 downto 0)) & '0';
-                    end if;
-                    -- Scale by tracking amount
-                    v_warp_product := v_warp_triangle * s_tracking_amt;
-                    v_warp_offset  := resize(v_warp_product(19 downto 10), C_BUF_DEPTH);
+                    v_warp_offset := resize(s_pre_warp_prod(19 downto 10), C_BUF_DEPTH);
                 end if;
 
                 -- Combine jitter + warp
@@ -445,71 +495,73 @@ begin
     end process p_stage1;
 
     ---------------------------------------------------------------------------
-    -- Stage 2: BRAM read output + noise computation + zone detection
+    -- Stage 2: Noise multiply + register products
     -- Latency: 1 clock
     ---------------------------------------------------------------------------
     p_stage2 : process(clk)
-        variable v_noise_raw     : unsigned(19 downto 0);  -- 10-bit * 10-bit
+    begin
+        if rising_edge(clk) then
+            -- Pass through BRAM and IIR outputs
+            s2a_jittered_y <= unsigned(s1_bram_rd_y);
+            s2a_blur_u <= s1_blur_u;
+            s2a_blur_v <= s1_blur_v;
+
+            -- Register noise multiply products (centering done in Stage 2b)
+            s2a_noise_raw    <= unsigned(s_lfsr_out(9 downto 0)) * s_noise_amount;
+            s2a_uv_noise_raw <= unsigned(s_lfsr_out(15 downto 6)) * s_noise_amount;
+            s2a_color_noise  <= s_color_noise;
+            s2a_dropout      <= s_dropout_active;
+        end if;
+    end process p_stage2;
+
+    ---------------------------------------------------------------------------
+    -- Stage 2b: Noise centering + head-switch zone detection
+    -- Latency: 1 clock
+    ---------------------------------------------------------------------------
+    p_stage2b : process(clk)
         variable v_noise_val     : signed(10 downto 0);
-        variable v_uv_noise_raw  : unsigned(19 downto 0);
         variable v_uv_noise_val  : signed(10 downto 0);
         variable v_hs_lines      : unsigned(9 downto 0);
     begin
         if rising_edge(clk) then
-            -- Jittered Y from BRAM
-            s2_jittered_y <= unsigned(s1_bram_rd_y);
+            s2_jittered_y <= s2a_jittered_y;
+            s2_blur_u <= s2a_blur_u;
+            s2_blur_v <= s2a_blur_v;
 
-            -- Align blurred U/V (1 extra clock delay to match BRAM Y path)
-            s2_blur_u <= s1_blur_u;
-            s2_blur_v <= s1_blur_v;
-
-            -- Compute Y noise: lfsr(9:0) centered around 0, scaled by noise_amount
-            -- noise = ((lfsr - 512) * noise_amount) >> 10
-            v_noise_raw := unsigned(s_lfsr_out(9 downto 0)) * s_noise_amount;
-            v_noise_val := signed(resize(v_noise_raw(19 downto 10), 11))
+            -- Center noise: subtract half of noise_amount
+            v_noise_val := signed(resize(s2a_noise_raw(19 downto 10), 11))
                          - to_signed(to_integer(s_noise_amount) / 2, 11);
             s2_y_noise <= v_noise_val;
 
-            -- UV noise (optionally same as Y noise or different LFSR bits)
-            if s_color_noise = '1' then
-                v_uv_noise_raw := unsigned(s_lfsr_out(15 downto 6)) * s_noise_amount;
-                v_uv_noise_val := signed(resize(v_uv_noise_raw(19 downto 10), 11))
+            -- UV noise (conditional on color noise toggle)
+            if s2a_color_noise = '1' then
+                v_uv_noise_val := signed(resize(s2a_uv_noise_raw(19 downto 10), 11))
                                 - to_signed(to_integer(s_noise_amount) / 2, 11);
                 s2_uv_noise <= v_uv_noise_val;
             else
-                s2_uv_noise <= (others => '0');  -- mono noise: no UV noise
+                s2_uv_noise <= (others => '0');
             end if;
 
             -- Head-switch zone detection (bottom of frame)
-            -- Head switch size: scaled from 0 (none) to ~64 lines max
-            v_hs_lines := "00" & s_head_switch(9 downto 2);  -- 0-255 range for line count
-
+            v_hs_lines := "00" & s_head_switch(9 downto 2);
             if s_line_count > (to_unsigned(1023, 10) - v_hs_lines) and v_hs_lines /= 0 then
                 s2_in_head_zone <= '1';
             else
                 s2_in_head_zone <= '0';
             end if;
 
-            -- Dropout (sampled per-line in stage 0)
-            s2_dropout <= s_dropout_active;
+            s2_dropout <= s2a_dropout;
         end if;
-    end process p_stage2;
+    end process p_stage2b;
 
     ---------------------------------------------------------------------------
-    -- Stage 3: Apply noise, dropout, head-switch, color loss, clamp
+    -- Stage 3: Apply general noise + dropout
     -- Latency: 1 clock
     ---------------------------------------------------------------------------
     p_stage3 : process(clk)
         variable v_y_out   : unsigned(9 downto 0);
         variable v_u_out   : unsigned(9 downto 0);
         variable v_v_out   : unsigned(9 downto 0);
-        variable v_hs_noise_y  : signed(10 downto 0);
-        variable v_hs_noise_uv : signed(10 downto 0);
-        variable v_color_scale : unsigned(9 downto 0);
-        variable v_u_centered  : signed(10 downto 0);
-        variable v_v_centered  : signed(10 downto 0);
-        variable v_u_scaled    : signed(21 downto 0);
-        variable v_v_scaled    : signed(21 downto 0);
     begin
         if rising_edge(clk) then
             if s2_dropout = '1' then
@@ -525,49 +577,43 @@ begin
                     v_v_out := to_unsigned(512, 10);
                 end if;
             else
-                -- Normal processing: start with jittered Y and blurred U/V
-                v_y_out := s2_jittered_y;
-                v_u_out := s2_blur_u;
-                v_v_out := s2_blur_v;
-
-                -- Add general noise to Y
-                v_y_out := sat_add_s(v_y_out, s2_y_noise);
-
-                -- Add noise to U/V if color noise enabled
-                v_u_out := sat_add_s(v_u_out, s2_uv_noise);
-                v_v_out := sat_add_s(v_v_out, s2_uv_noise);
-
-                -- Head-switch zone: add heavy noise
-                if s2_in_head_zone = '1' then
-                    v_hs_noise_y := signed(resize(unsigned(s_lfsr_out(9 downto 0)), 11))
-                                  - to_signed(512, 11);
-                    v_hs_noise_uv := signed(resize(unsigned(s_lfsr_out(15 downto 6)), 11))
-                                   - to_signed(512, 11);
-                    v_y_out := sat_add_s(v_y_out, v_hs_noise_y);
-                    v_u_out := sat_add_s(v_u_out, v_hs_noise_uv);
-                    v_v_out := sat_add_s(v_v_out, v_hs_noise_uv);
-                end if;
-
-                -- Color loss: blend U/V toward 512 (neutral)
-                -- output_u = 512 + ((blurred_u - 512) * (1023 - color_loss)) >> 10
-                if s_color_loss /= 0 then
-                    v_color_scale := to_unsigned(1023, 10) - s_color_loss;
-                    v_u_centered := signed(resize(v_u_out, 11)) - to_signed(512, 11);
-                    v_v_centered := signed(resize(v_v_out, 11)) - to_signed(512, 11);
-                    v_u_scaled := v_u_centered * signed(resize(v_color_scale, 11));
-                    v_v_scaled := v_v_centered * signed(resize(v_color_scale, 11));
-                    v_u_out := clamp_signed_to_u10(
-                        resize(v_u_scaled(20 downto 10), 11) + to_signed(512, 11));
-                    v_v_out := clamp_signed_to_u10(
-                        resize(v_v_scaled(20 downto 10), 11) + to_signed(512, 11));
-                end if;
+                -- Normal processing: add general noise
+                v_y_out := sat_add_s(s2_jittered_y, s2_y_noise);
+                v_u_out := sat_add_s(s2_blur_u, s2_uv_noise);
+                v_v_out := sat_add_s(s2_blur_v, s2_uv_noise);
             end if;
 
-            s3_y <= v_y_out;
-            s3_u <= v_u_out;
-            s3_v <= v_v_out;
+            s3a_y <= v_y_out;
+            s3a_u <= v_u_out;
+            s3a_v <= v_v_out;
+            s3a_in_head_zone <= s2_in_head_zone;
         end if;
     end process p_stage3;
+
+    ---------------------------------------------------------------------------
+    -- Stage 3b: Head-switch zone noise
+    -- Latency: 1 clock
+    ---------------------------------------------------------------------------
+    p_stage3b : process(clk)
+        variable v_hs_noise_y  : signed(10 downto 0);
+        variable v_hs_noise_uv : signed(10 downto 0);
+    begin
+        if rising_edge(clk) then
+            if s3a_in_head_zone = '1' then
+                v_hs_noise_y := signed(resize(unsigned(s_lfsr_out(9 downto 0)), 11))
+                              - to_signed(512, 11);
+                v_hs_noise_uv := signed(resize(unsigned(s_lfsr_out(15 downto 6)), 11))
+                               - to_signed(512, 11);
+                s3_y <= sat_add_s(s3a_y, v_hs_noise_y);
+                s3_u <= sat_add_s(s3a_u, v_hs_noise_uv);
+                s3_v <= sat_add_s(s3a_v, v_hs_noise_uv);
+            else
+                s3_y <= s3a_y;
+                s3_u <= s3a_u;
+                s3_v <= s3a_v;
+            end if;
+        end if;
+    end process p_stage3b;
 
     ---------------------------------------------------------------------------
     -- Stage 4: Output register (wet signal ready for interpolator)
