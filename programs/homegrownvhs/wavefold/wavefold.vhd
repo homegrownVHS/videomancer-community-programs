@@ -57,8 +57,8 @@
 --   Pot 6  (registers_in(5)):   Brightness (post-fold Y offset, center=none)
 --   Tog 7  (registers_in(6)(0)): Shape bit 0 (00=Tri,01=Sin,10=Saw,11=Sqr)
 --   Tog 8  (registers_in(6)(1)): Shape bit 1
---   Tog 9  (registers_in(6)(2)): Colorspace (0=YUV, 1=RGB)
---   Tog 10 (registers_in(6)(3)): Invert fold output
+--   Tog 9  (registers_in(6)(2)): Cspace bit 0 (00=YUV,01=RGB,10=XYZ,11=Y-only)
+--   Tog 10 (registers_in(6)(3)): Cspace bit 1
 --   Tog 11 (registers_in(6)(4)): Bypass
 --   Fader  (registers_in(7)):    Mix (dry/wet)
 --
@@ -97,8 +97,7 @@ architecture wavefold of program_top is
     signal r_smoothing       : unsigned(7 downto 0) := (others => '0');
     signal r_brightness      : unsigned(9 downto 0) := to_unsigned(512, 10);
     signal r_shape           : std_logic_vector(1 downto 0) := "00";
-    signal r_rgb_mode        : std_logic := '0';
-    signal r_invert          : std_logic := '0';
+    signal r_csc_mode        : std_logic_vector(1 downto 0) := "00";
     signal s_bypass          : std_logic;
     signal s_mix             : unsigned(9 downto 0);
 
@@ -270,8 +269,7 @@ begin
                 r_smoothing     <= unsigned(registers_in(4)(9 downto 2));
                 r_brightness    <= unsigned(registers_in(5)(9 downto 0));
                 r_shape         <= registers_in(6)(1) & registers_in(6)(0);
-                r_rgb_mode      <= registers_in(6)(2);
-                r_invert        <= registers_in(6)(3);
+                r_csc_mode      <= registers_in(6)(3) & registers_in(6)(2);
 
                 -- Luma frequency factor: (knob >> 2) + 4 = 4..259
                 -- Use 9-bit to avoid overflow, clamp to 255
@@ -301,7 +299,8 @@ begin
     end process p_param_latch;
 
     -- =========================================================================
-    -- Stage 0 (T+1): Input register + optional CSC forward (YUV -> RGB)
+    -- Stage 0 (T+1): Input register + optional CSC forward
+    -- 00=YUV (pass), 01=RGB, 10=XYZ, 11=Y-only
     -- =========================================================================
     p_stage0 : process(clk)
         variable v_u_s : signed(10 downto 0);
@@ -309,46 +308,89 @@ begin
         variable v_r   : signed(11 downto 0);
         variable v_g   : signed(11 downto 0);
         variable v_b   : signed(11 downto 0);
+        variable v_x   : signed(11 downto 0);
+        variable v_yx  : signed(11 downto 0);
+        variable v_z   : signed(11 downto 0);
     begin
         if rising_edge(clk) then
-            if r_rgb_mode = '1' then
-                -- Approximate BT.601 YUV -> RGB (using filtered source)
-                v_u_s := signed(resize(s_src_u, 11)) - to_signed(512, 11);
-                v_v_s := signed(resize(s_src_v, 11)) - to_signed(512, 11);
+            case r_csc_mode is
+                when "01" =>
+                    -- RGB mode: Approximate BT.601 YUV -> RGB
+                    v_u_s := signed(resize(s_src_u, 11)) - to_signed(512, 11);
+                    v_v_s := signed(resize(s_src_v, 11)) - to_signed(512, 11);
 
-                -- R = Y + V_s * ~1.375
-                v_r := signed(resize(s_src_y, 12)) +
-                       resize(v_v_s, 12) +
-                       resize(shift_right(v_v_s, 2), 12) +
-                       resize(shift_right(v_v_s, 3), 12);
-                -- G = Y - U_s * ~0.34 - V_s * ~0.69
-                v_g := signed(resize(s_src_y, 12)) -
-                       resize(shift_right(v_u_s, 2), 12) -
-                       resize(shift_right(v_u_s, 4), 12) -
-                       resize(shift_right(v_v_s, 1), 12) -
-                       resize(shift_right(v_v_s, 3), 12);
-                -- B = Y + U_s * ~1.75
-                v_b := signed(resize(s_src_y, 12)) +
-                       resize(v_u_s, 12) +
-                       resize(shift_right(v_u_s, 1), 12) +
-                       resize(shift_right(v_u_s, 2), 12);
+                    v_r := signed(resize(s_src_y, 12)) +
+                           resize(v_v_s, 12) +
+                           resize(shift_right(v_v_s, 2), 12) +
+                           resize(shift_right(v_v_s, 3), 12);
+                    v_g := signed(resize(s_src_y, 12)) -
+                           resize(shift_right(v_u_s, 2), 12) -
+                           resize(shift_right(v_u_s, 4), 12) -
+                           resize(shift_right(v_v_s, 1), 12) -
+                           resize(shift_right(v_v_s, 3), 12);
+                    v_b := signed(resize(s_src_y, 12)) +
+                           resize(v_u_s, 12) +
+                           resize(shift_right(v_u_s, 1), 12) +
+                           resize(shift_right(v_u_s, 2), 12);
 
-                if v_r < 0 then s0_ch0 <= (others => '0');
-                elsif v_r > 1023 then s0_ch0 <= to_unsigned(1023, 10);
-                else s0_ch0 <= unsigned(v_r(9 downto 0)); end if;
+                    if v_r < 0 then s0_ch0 <= (others => '0');
+                    elsif v_r > 1023 then s0_ch0 <= to_unsigned(1023, 10);
+                    else s0_ch0 <= unsigned(v_r(9 downto 0)); end if;
 
-                if v_g < 0 then s0_ch1 <= (others => '0');
-                elsif v_g > 1023 then s0_ch1 <= to_unsigned(1023, 10);
-                else s0_ch1 <= unsigned(v_g(9 downto 0)); end if;
+                    if v_g < 0 then s0_ch1 <= (others => '0');
+                    elsif v_g > 1023 then s0_ch1 <= to_unsigned(1023, 10);
+                    else s0_ch1 <= unsigned(v_g(9 downto 0)); end if;
 
-                if v_b < 0 then s0_ch2 <= (others => '0');
-                elsif v_b > 1023 then s0_ch2 <= to_unsigned(1023, 10);
-                else s0_ch2 <= unsigned(v_b(9 downto 0)); end if;
-            else
-                s0_ch0 <= s_src_y;
-                s0_ch1 <= s_src_u;
-                s0_ch2 <= s_src_v;
-            end if;
+                    if v_b < 0 then s0_ch2 <= (others => '0');
+                    elsif v_b > 1023 then s0_ch2 <= to_unsigned(1023, 10);
+                    else s0_ch2 <= unsigned(v_b(9 downto 0)); end if;
+
+                when "10" =>
+                    -- XYZ mode: Approximate YUV -> CIE XYZ
+                    v_u_s := signed(resize(s_src_u, 11)) - to_signed(512, 11);
+                    v_v_s := signed(resize(s_src_v, 11)) - to_signed(512, 11);
+
+                    -- X ~ Y + 3/16*U_s + 5/16*V_s
+                    v_x := signed(resize(s_src_y, 12)) +
+                           resize(shift_right(v_u_s, 3), 12) +
+                           resize(shift_right(v_u_s, 4), 12) +
+                           resize(shift_right(v_v_s, 2), 12) +
+                           resize(shift_right(v_v_s, 4), 12);
+                    -- Y_xyz ~ Y - U_s/8 - V_s/4
+                    v_yx := signed(resize(s_src_y, 12)) -
+                            resize(shift_right(v_u_s, 3), 12) -
+                            resize(shift_right(v_v_s, 2), 12);
+                    -- Z ~ Y + 13/8*U_s - V_s/16
+                    v_z := signed(resize(s_src_y, 12)) +
+                           resize(v_u_s, 12) +
+                           resize(shift_right(v_u_s, 1), 12) +
+                           resize(shift_right(v_u_s, 3), 12) -
+                           resize(shift_right(v_v_s, 4), 12);
+
+                    if v_x < 0 then s0_ch0 <= (others => '0');
+                    elsif v_x > 1023 then s0_ch0 <= to_unsigned(1023, 10);
+                    else s0_ch0 <= unsigned(v_x(9 downto 0)); end if;
+
+                    if v_yx < 0 then s0_ch1 <= (others => '0');
+                    elsif v_yx > 1023 then s0_ch1 <= to_unsigned(1023, 10);
+                    else s0_ch1 <= unsigned(v_yx(9 downto 0)); end if;
+
+                    if v_z < 0 then s0_ch2 <= (others => '0');
+                    elsif v_z > 1023 then s0_ch2 <= to_unsigned(1023, 10);
+                    else s0_ch2 <= unsigned(v_z(9 downto 0)); end if;
+
+                when "11" =>
+                    -- Y-only mode: fold luma only, neutral chroma
+                    s0_ch0 <= s_src_y;
+                    s0_ch1 <= to_unsigned(512, 10);
+                    s0_ch2 <= to_unsigned(512, 10);
+
+                when others =>
+                    -- YUV mode (00): direct passthrough
+                    s0_ch0 <= s_src_y;
+                    s0_ch1 <= s_src_u;
+                    s0_ch2 <= s_src_v;
+            end case;
         end if;
     end process p_stage0;
 
@@ -449,7 +491,8 @@ begin
     end process p_stage3;
 
     -- =========================================================================
-    -- Stage 4 (T+5): Invert + CSC reverse (RGB->YUV) + brightness + clamp
+    -- Stage 4 (T+5): CSC reverse + brightness + clamp
+    -- 00=YUV, 01=RGB->YUV, 10=XYZ->YUV, 11=Y-only (pass original chroma)
     -- =========================================================================
     p_stage4 : process(clk)
         variable v0 : unsigned(9 downto 0);
@@ -462,64 +505,105 @@ begin
         variable v_u_s : signed(11 downto 0);
         variable v_v_s : signed(11 downto 0);
         variable v_brt : signed(11 downto 0);
+        variable v_ch0_s : signed(11 downto 0);
+        variable v_ch1_s : signed(11 downto 0);
+        variable v_ch2_s : signed(11 downto 0);
     begin
         if rising_edge(clk) then
-            if r_invert = '1' then
-                v0 := to_unsigned(1023, 10) - s3_ch0;
-                v1 := to_unsigned(1023, 10) - s3_ch1;
-                v2 := to_unsigned(1023, 10) - s3_ch2;
-            else
-                v0 := s3_ch0;
-                v1 := s3_ch1;
-                v2 := s3_ch2;
-            end if;
+            v0 := s3_ch0;
+            v1 := s3_ch1;
+            v2 := s3_ch2;
 
-            if r_rgb_mode = '1' then
-                v_r_s := signed(resize(v0, 12));
-                v_g_s := signed(resize(v1, 12));
-                v_b_s := signed(resize(v2, 12));
+            case r_csc_mode is
+                when "01" =>
+                    -- RGB -> YUV reverse
+                    v_r_s := signed(resize(v0, 12));
+                    v_g_s := signed(resize(v1, 12));
+                    v_b_s := signed(resize(v2, 12));
 
-                -- Y = R*0.25 + G*0.5625 + B*0.125
-                v_y := shift_right(v_r_s, 2) +
-                       shift_right(v_g_s, 1) + shift_right(v_g_s, 4) +
-                       shift_right(v_b_s, 3);
-                -- U_s = -R*0.125 - G*0.25 + B*0.5
-                v_u_s := -shift_right(v_r_s, 3) -
-                          shift_right(v_g_s, 2) +
-                          shift_right(v_b_s, 1);
-                -- V_s = R*0.5 - G*0.375 - B*0.0625
-                v_v_s := shift_right(v_r_s, 1) -
-                         shift_right(v_g_s, 2) - shift_right(v_g_s, 3) -
-                         shift_right(v_b_s, 4);
+                    v_y := shift_right(v_r_s, 2) +
+                           shift_right(v_g_s, 1) + shift_right(v_g_s, 4) +
+                           shift_right(v_b_s, 3);
+                    v_u_s := -shift_right(v_r_s, 3) -
+                              shift_right(v_g_s, 2) +
+                              shift_right(v_b_s, 1);
+                    v_v_s := shift_right(v_r_s, 1) -
+                             shift_right(v_g_s, 2) - shift_right(v_g_s, 3) -
+                             shift_right(v_b_s, 4);
 
-                -- Brightness on Y
-                v_brt := signed(resize(r_brightness, 12)) - to_signed(512, 12);
-                v_y := v_y + v_brt;
+                    v_brt := signed(resize(r_brightness, 12)) - to_signed(512, 12);
+                    v_y := v_y + v_brt;
 
-                if v_y < 0 then s4_y <= (others => '0');
-                elsif v_y > 1023 then s4_y <= to_unsigned(1023, 10);
-                else s4_y <= unsigned(v_y(9 downto 0)); end if;
+                    if v_y < 0 then s4_y <= (others => '0');
+                    elsif v_y > 1023 then s4_y <= to_unsigned(1023, 10);
+                    else s4_y <= unsigned(v_y(9 downto 0)); end if;
 
-                v_u_s := v_u_s + to_signed(512, 12);
-                if v_u_s < 0 then s4_u <= (others => '0');
-                elsif v_u_s > 1023 then s4_u <= to_unsigned(1023, 10);
-                else s4_u <= unsigned(v_u_s(9 downto 0)); end if;
+                    v_u_s := v_u_s + to_signed(512, 12);
+                    if v_u_s < 0 then s4_u <= (others => '0');
+                    elsif v_u_s > 1023 then s4_u <= to_unsigned(1023, 10);
+                    else s4_u <= unsigned(v_u_s(9 downto 0)); end if;
 
-                v_v_s := v_v_s + to_signed(512, 12);
-                if v_v_s < 0 then s4_v <= (others => '0');
-                elsif v_v_s > 1023 then s4_v <= to_unsigned(1023, 10);
-                else s4_v <= unsigned(v_v_s(9 downto 0)); end if;
-            else
-                -- YUV mode: brightness offset on Y only
-                v_brt := signed(resize(v0, 12)) +
-                         signed(resize(r_brightness, 12)) - to_signed(512, 12);
-                if v_brt < 0 then s4_y <= (others => '0');
-                elsif v_brt > 1023 then s4_y <= to_unsigned(1023, 10);
-                else s4_y <= unsigned(v_brt(9 downto 0)); end if;
+                    v_v_s := v_v_s + to_signed(512, 12);
+                    if v_v_s < 0 then s4_v <= (others => '0');
+                    elsif v_v_s > 1023 then s4_v <= to_unsigned(1023, 10);
+                    else s4_v <= unsigned(v_v_s(9 downto 0)); end if;
 
-                s4_u <= v1;
-                s4_v <= v2;
-            end if;
+                when "10" =>
+                    -- XYZ -> YUV reverse (approximate inverse)
+                    v_ch0_s := signed(resize(v0, 12));
+                    v_ch1_s := signed(resize(v1, 12));
+                    v_ch2_s := signed(resize(v2, 12));
+
+                    -- Y ~ 3/8*X + 5/8*Y_xyz
+                    v_y := shift_right(v_ch0_s, 2) + shift_right(v_ch0_s, 3) +
+                           shift_right(v_ch1_s, 1) + shift_right(v_ch1_s, 3);
+                    -- U_s ~ -3/16*X - 1/2*Y_xyz + 5/8*Z
+                    v_u_s := -shift_right(v_ch0_s, 3) - shift_right(v_ch0_s, 4) -
+                              shift_right(v_ch1_s, 1) +
+                              shift_right(v_ch2_s, 1) + shift_right(v_ch2_s, 3);
+                    -- V_s ~ 2*X - 3/2*Y_xyz - 3/8*Z
+                    v_v_s := shift_left(v_ch0_s, 1) -
+                             v_ch1_s - shift_right(v_ch1_s, 1) -
+                             shift_right(v_ch2_s, 2) - shift_right(v_ch2_s, 3);
+
+                    v_brt := signed(resize(r_brightness, 12)) - to_signed(512, 12);
+                    v_y := v_y + v_brt;
+
+                    if v_y < 0 then s4_y <= (others => '0');
+                    elsif v_y > 1023 then s4_y <= to_unsigned(1023, 10);
+                    else s4_y <= unsigned(v_y(9 downto 0)); end if;
+
+                    v_u_s := v_u_s + to_signed(512, 12);
+                    if v_u_s < 0 then s4_u <= (others => '0');
+                    elsif v_u_s > 1023 then s4_u <= to_unsigned(1023, 10);
+                    else s4_u <= unsigned(v_u_s(9 downto 0)); end if;
+
+                    v_v_s := v_v_s + to_signed(512, 12);
+                    if v_v_s < 0 then s4_v <= (others => '0');
+                    elsif v_v_s > 1023 then s4_v <= to_unsigned(1023, 10);
+                    else s4_v <= unsigned(v_v_s(9 downto 0)); end if;
+
+                when "11" =>
+                    -- Y-only: fold luma, preserve original chroma from dry tap
+                    v_brt := signed(resize(v0, 12)) +
+                             signed(resize(r_brightness, 12)) - to_signed(512, 12);
+                    if v_brt < 0 then s4_y <= (others => '0');
+                    elsif v_brt > 1023 then s4_y <= to_unsigned(1023, 10);
+                    else s4_y <= unsigned(v_brt(9 downto 0)); end if;
+                    s4_u <= s_dry_u;
+                    s4_v <= s_dry_v;
+
+                when others =>
+                    -- YUV mode (00): brightness on Y, pass U/V
+                    v_brt := signed(resize(v0, 12)) +
+                             signed(resize(r_brightness, 12)) - to_signed(512, 12);
+                    if v_brt < 0 then s4_y <= (others => '0');
+                    elsif v_brt > 1023 then s4_y <= to_unsigned(1023, 10);
+                    else s4_y <= unsigned(v_brt(9 downto 0)); end if;
+
+                    s4_u <= v1;
+                    s4_v <= v2;
+            end case;
         end if;
     end process p_stage4;
 
