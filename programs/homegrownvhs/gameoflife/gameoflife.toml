@@ -1,0 +1,150 @@
+[program]
+program_id = "com.homegrownvhs.gameoflife"
+program_version = "1.0.0"
+abi_version = ">=1.0,<2.0"
+program_name = "Game of Life"
+author = "homegrownVHS"
+license = "GPL-3.0"
+categories = ["Game", "Pattern", "Pixel"]
+program_type = "processing"
+description = "Conway's Game of Life automaton overlaid on video"
+hardware_compatibility = ["rev_b"]
+core = "yuv444_30b"
+
+# Knob 1: Speed — evolution rate (CW = faster)
+[[parameter]]
+parameter_id = "rotary_potentiometer_1"
+name_label = "Speed"
+control_mode = "linear"
+initial_value = 768
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# Knob 2: Color — alive cell color palette
+[[parameter]]
+parameter_id = "rotary_potentiometer_2"
+name_label = "Color"
+control_mode = "steps_8"
+initial_value = 0
+display_min_value = 0
+display_max_value = 7
+suffix_label = ""
+
+# Knob 3: Brightness — alive cell luma level
+[[parameter]]
+parameter_id = "rotary_potentiometer_3"
+name_label = "Brightness"
+control_mode = "linear"
+initial_value = 900
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# Knob 4: Dim — dead cell darkness level
+[[parameter]]
+parameter_id = "rotary_potentiometer_4"
+name_label = "Dim"
+control_mode = "linear"
+initial_value = 200
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# Knob 5: Density — random seed fill ratio
+[[parameter]]
+parameter_id = "rotary_potentiometer_5"
+name_label = "Density"
+control_mode = "linear"
+initial_value = 300
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# Toggle 7: Video Reveal mode
+[[parameter]]
+parameter_id = "toggle_switch_7"
+name_label = "Video Reveal"
+value_labels = ["Color", "Video"]
+initial_value_label = "Color"
+
+# Toggle 8: Pause
+[[parameter]]
+parameter_id = "toggle_switch_8"
+name_label = "Pause"
+value_labels = ["Run", "Pause"]
+initial_value_label = "Run"
+
+# Toggle 9: Grid Lines
+[[parameter]]
+parameter_id = "toggle_switch_9"
+name_label = "Grid Lines"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+# Toggle 10: Reseed
+[[parameter]]
+parameter_id = "toggle_switch_10"
+name_label = "Reseed"
+value_labels = ["Off", "Seed"]
+initial_value_label = "Off"
+
+# Toggle 11: Bypass
+[[parameter]]
+parameter_id = "toggle_switch_11"
+name_label = "Bypass"
+value_labels = ["Off", "On"]
+initial_value_label = "Off"
+
+# Fader 12: Mix (dry/wet blend)
+[[parameter]]
+parameter_id = "linear_potentiometer_12"
+name_label = "Mix"
+control_mode = "linear"
+initial_value = 1023
+display_min_value = 0
+display_max_value = 100
+suffix_label = "%"
+
+# Presets
+[[preset]]
+name = "Classic"
+rotary_potentiometer_1 = 768
+rotary_potentiometer_2 = 0
+rotary_potentiometer_3 = 900
+rotary_potentiometer_4 = 200
+rotary_potentiometer_5 = 300
+toggle_switch_7 = 0
+toggle_switch_8 = 0
+toggle_switch_9 = 0
+toggle_switch_10 = 0
+toggle_switch_11 = 0
+linear_potentiometer_12 = 1023
+
+[[preset]]
+name = "Video Reveal"
+rotary_potentiometer_1 = 600
+rotary_potentiometer_2 = 2
+rotary_potentiometer_3 = 1023
+rotary_potentiometer_4 = 100
+rotary_potentiometer_5 = 350
+toggle_switch_7 = 1
+toggle_switch_8 = 0
+toggle_switch_9 = 0
+toggle_switch_10 = 0
+toggle_switch_11 = 0
+linear_potentiometer_12 = 1023
+
+[[preset]]
+name = "Chaos"
+rotary_potentiometer_1 = 1023
+rotary_potentiometer_2 = 6
+rotary_potentiometer_3 = 1023
+rotary_potentiometer_4 = 50
+rotary_potentiometer_5 = 512
+toggle_switch_7 = 0
+toggle_switch_8 = 0
+toggle_switch_9 = 1
+toggle_switch_10 = 0
+toggle_switch_11 = 0
+linear_potentiometer_12 = 1023
