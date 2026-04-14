@@ -44,7 +44,7 @@
 --   Total: 9 clocks
 --
 -- Submodules:
---   variable_filter_s x3: 1st-order IIR LPF on input video, 1 cycle (combinational output)
+--   inline IIR LPF x3: line-reset IIR LPF (19-bit precision, no cross-line bleed)
 --   sin_cos_full_lut_10x10 x3: sine lookup, combinational
 --   interpolator_u x3: linear blend for dry/wet mix, 4 clocks each
 --
@@ -157,16 +157,20 @@ architecture wavefold of program_top is
     signal s_mix_v        : unsigned(9 downto 0);
     signal s_mix_y_valid  : std_logic;
 
-    -- LPF filter signals (signed 11-bit to hold 0-1023 unsigned range)
-    signal s_filt_in_y  : signed(10 downto 0);
-    signal s_filt_in_u  : signed(10 downto 0);
-    signal s_filt_in_v  : signed(10 downto 0);
-    signal s_filt_lp_y  : signed(10 downto 0);
-    signal s_filt_lp_u  : signed(10 downto 0);
-    signal s_filt_lp_v  : signed(10 downto 0);
-    signal s_src_y      : unsigned(9 downto 0);
-    signal s_src_u      : unsigned(9 downto 0);
-    signal s_src_v      : unsigned(9 downto 0);
+    -- Inline IIR LPF with line-boundary reset and extended precision
+    -- 19-bit signed state (sign + 10 data + 8 fractional) per channel.
+    -- Resets on first active pixel of each line to prevent cross-line bleed.
+    constant C_IIR_FRAC  : integer := 8;
+    constant C_IIR_WIDTH : integer := 11 + C_IIR_FRAC;  -- 19 bits signed
+    signal s_iir_y          : signed(C_IIR_WIDTH - 1 downto 0) := (others => '0');
+    signal s_iir_u          : signed(C_IIR_WIDTH - 1 downto 0) := (others => '0');
+    signal s_iir_v          : signed(C_IIR_WIDTH - 1 downto 0) := (others => '0');
+    signal s_line_first_pix : std_logic := '1';
+    signal s_prev_hsync_lpf : std_logic := '1';
+    signal s_lpf_mix_acc    : unsigned(4 downto 0) := (others => '0');
+    signal s_src_y          : unsigned(9 downto 0);
+    signal s_src_u          : unsigned(9 downto 0);
+    signal s_src_v          : unsigned(9 downto 0);
 
 begin
 
@@ -175,40 +179,78 @@ begin
     s_mix    <= unsigned(registers_in(7)(9 downto 0));
 
     -- =========================================================================
-    -- Input LPF: variable_filter_s on each channel (combinational output)
+    -- Input LPF: inline IIR with line-boundary reset and extended precision
+    -- 19-bit internal state (sign + 10 data + 8 fractional) per channel.
+    -- Resets to input on first active pixel of each line to eliminate
+    -- cross-line bleed (horizontal noise). Extra fractional bits reduce
+    -- step quantization (chroma banding). Sigma-delta fine mixing from
+    -- cutoff lower 4 bits gives 256 smooth cutoff steps.
     -- =========================================================================
-    s_filt_in_y <= signed(resize(unsigned(data_in.y), 11));
-    s_filt_in_u <= signed(resize(unsigned(data_in.u), 11));
-    s_filt_in_v <= signed(resize(unsigned(data_in.v), 11));
+    p_lpf : process(clk)
+        variable v_in_y  : signed(C_IIR_WIDTH - 1 downto 0);
+        variable v_in_u  : signed(C_IIR_WIDTH - 1 downto 0);
+        variable v_in_v  : signed(C_IIR_WIDTH - 1 downto 0);
+        variable v_err_y : signed(C_IIR_WIDTH - 1 downto 0);
+        variable v_err_u : signed(C_IIR_WIDTH - 1 downto 0);
+        variable v_err_v : signed(C_IIR_WIDTH - 1 downto 0);
+        variable v_k_coarse  : natural;
+        variable v_k_use     : natural;
+        variable v_acc_next  : unsigned(4 downto 0);
+    begin
+        if rising_edge(clk) then
+            v_k_coarse := to_integer(r_smoothing(7 downto 4));
 
-    u_filt_y : entity work.variable_filter_s
-        generic map (G_WIDTH => 11)
-        port map (clk => clk, enable => data_in.avid,
-                  a => s_filt_in_y, cutoff => r_smoothing,
-                  low_pass => s_filt_lp_y, high_pass => open, valid => open);
+            v_in_y := shift_left(resize(signed('0' & data_in.y), C_IIR_WIDTH), C_IIR_FRAC);
+            v_in_u := shift_left(resize(signed('0' & data_in.u), C_IIR_WIDTH), C_IIR_FRAC);
+            v_in_v := shift_left(resize(signed('0' & data_in.v), C_IIR_WIDTH), C_IIR_FRAC);
 
-    u_filt_u : entity work.variable_filter_s
-        generic map (G_WIDTH => 11)
-        port map (clk => clk, enable => data_in.avid,
-                  a => s_filt_in_u, cutoff => r_smoothing,
-                  low_pass => s_filt_lp_u, high_pass => open, valid => open);
+            if data_in.avid = '1' then
+                if s_line_first_pix = '1' then
+                    -- Snap to input on first pixel of line (eliminates cross-line bleed)
+                    s_iir_y <= v_in_y;
+                    s_iir_u <= v_in_u;
+                    s_iir_v <= v_in_v;
+                    s_line_first_pix <= '0';
+                else
+                    v_err_y := v_in_y - s_iir_y;
+                    v_err_u := v_in_u - s_iir_u;
+                    v_err_v := v_in_v - s_iir_v;
 
-    u_filt_v : entity work.variable_filter_s
-        generic map (G_WIDTH => 11)
-        port map (clk => clk, enable => data_in.avid,
-                  a => s_filt_in_v, cutoff => r_smoothing,
-                  low_pass => s_filt_lp_v, high_pass => open, valid => open);
+                    -- Sigma-delta fine mixing: alternate k and k+1
+                    v_acc_next := s_lpf_mix_acc + resize(r_smoothing(3 downto 0), 5);
+                    if v_acc_next >= 16 then
+                        s_lpf_mix_acc <= v_acc_next - 16;
+                        if v_k_coarse < 15 then
+                            v_k_use := v_k_coarse + 1;
+                        else
+                            v_k_use := v_k_coarse;
+                        end if;
+                    else
+                        s_lpf_mix_acc <= v_acc_next;
+                        v_k_use := v_k_coarse;
+                    end if;
 
-    -- Clamp filter output to 0-1023 unsigned
-    s_src_y <= (others => '0') when s_filt_lp_y < 0 else
-               to_unsigned(1023, 10) when s_filt_lp_y > 1023 else
-               unsigned(s_filt_lp_y(9 downto 0));
-    s_src_u <= (others => '0') when s_filt_lp_u < 0 else
-               to_unsigned(1023, 10) when s_filt_lp_u > 1023 else
-               unsigned(s_filt_lp_u(9 downto 0));
-    s_src_v <= (others => '0') when s_filt_lp_v < 0 else
-               to_unsigned(1023, 10) when s_filt_lp_v > 1023 else
-               unsigned(s_filt_lp_v(9 downto 0));
+                    s_iir_y <= s_iir_y + shift_right(v_err_y, v_k_use);
+                    s_iir_u <= s_iir_u + shift_right(v_err_u, v_k_use);
+                    s_iir_v <= s_iir_v + shift_right(v_err_v, v_k_use);
+                end if;
+            end if;
+
+            -- Detect line boundaries
+            s_prev_hsync_lpf <= data_in.hsync_n;
+            if s_prev_hsync_lpf = '1' and data_in.hsync_n = '0' then
+                s_line_first_pix <= '1';
+            end if;
+        end if;
+    end process p_lpf;
+
+    -- Extract 10-bit unsigned from 19-bit signed IIR state (bits 17:8)
+    s_src_y <= to_unsigned(0, 10) when s_iir_y(C_IIR_WIDTH - 1) = '1' else
+               unsigned(s_iir_y(9 + C_IIR_FRAC downto C_IIR_FRAC));
+    s_src_u <= to_unsigned(0, 10) when s_iir_u(C_IIR_WIDTH - 1) = '1' else
+               unsigned(s_iir_u(9 + C_IIR_FRAC downto C_IIR_FRAC));
+    s_src_v <= to_unsigned(0, 10) when s_iir_v(C_IIR_WIDTH - 1) = '1' else
+               unsigned(s_iir_v(9 + C_IIR_FRAC downto C_IIR_FRAC));
 
     -- =========================================================================
     -- Parameter latch on vsync (prevents mid-frame tearing)
