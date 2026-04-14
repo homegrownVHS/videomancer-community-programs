@@ -1,6 +1,6 @@
 [program]
 program_id = "com.homegrownvhs.wavefold"
-program_version = "2.0.0"
+program_version = "2.1.0"
 abi_version = ">=1.0,<2.0"
 program_name = "Wavefold"
 author = "homegrownvhs"
@@ -51,15 +51,15 @@ display_min_value = -100
 display_max_value = 100
 suffix_label = "%"
 
-# Pot 5: Extra phase for chroma channels (center = same)
+# Pot 5: Smoothing (LPF on source video before fold, 0=off)
 [[parameter]]
 parameter_id = "rotary_potentiometer_5"
-name_label = "Chroma Phase"
-control_mode = "polar_degs_360"
-initial_value = 512
+name_label = "Smoothing"
+control_mode = "linear"
+initial_value = 0
 display_min_value = 0
-display_max_value = 360
-suffix_label = "deg"
+display_max_value = 100
+suffix_label = "%"
 
 # Pot 6: Post-fold brightness offset (center = no change)
 [[parameter]]
@@ -124,7 +124,7 @@ rotary_potentiometer_1 = 128
 rotary_potentiometer_2 = 0
 rotary_potentiometer_3 = 512
 rotary_potentiometer_4 = 512
-rotary_potentiometer_5 = 512
+rotary_potentiometer_5 = 0
 rotary_potentiometer_6 = 512
 toggle_switch_7 = 0
 toggle_switch_8 = 0
@@ -139,7 +139,7 @@ rotary_potentiometer_1 = 600
 rotary_potentiometer_2 = 0
 rotary_potentiometer_3 = 512
 rotary_potentiometer_4 = 512
-rotary_potentiometer_5 = 512
+rotary_potentiometer_5 = 0
 rotary_potentiometer_6 = 512
 toggle_switch_7 = 1
 toggle_switch_8 = 0
@@ -154,7 +154,7 @@ rotary_potentiometer_1 = 400
 rotary_potentiometer_2 = 0
 rotary_potentiometer_3 = 512
 rotary_potentiometer_4 = 700
-rotary_potentiometer_5 = 768
+rotary_potentiometer_5 = 0
 rotary_potentiometer_6 = 512
 toggle_switch_7 = 0
 toggle_switch_8 = 1
@@ -169,7 +169,7 @@ rotary_potentiometer_1 = 300
 rotary_potentiometer_2 = 256
 rotary_potentiometer_3 = 512
 rotary_potentiometer_4 = 512
-rotary_potentiometer_5 = 512
+rotary_potentiometer_5 = 0
 rotary_potentiometer_6 = 512
 toggle_switch_7 = 1
 toggle_switch_8 = 1
@@ -184,7 +184,7 @@ rotary_potentiometer_1 = 500
 rotary_potentiometer_2 = 128
 rotary_potentiometer_3 = 600
 rotary_potentiometer_4 = 400
-rotary_potentiometer_5 = 512
+rotary_potentiometer_5 = 0
 rotary_potentiometer_6 = 512
 toggle_switch_7 = 1
 toggle_switch_8 = 0

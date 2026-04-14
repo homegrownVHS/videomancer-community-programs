@@ -150,8 +150,9 @@ architecture etchasketch of program_top is
     signal s_wr_addr : unsigned(C_BRAM_DEPTH - 1 downto 0) := (others => '0');
     signal s_wr_data : std_logic_vector(C_VIDEO_DATA_WIDTH - 1 downto 0) := (others => '0');
 
-    -- BRAM read (merged into stage 0)
-    signal s0_rd_data : std_logic_vector(C_VIDEO_DATA_WIDTH - 1 downto 0) := (others => '0');
+    -- BRAM read port (separate signals)
+    signal s_rd_addr : unsigned(C_BRAM_DEPTH - 1 downto 0) := (others => '0');
+    signal s_rd_data : std_logic_vector(C_VIDEO_DATA_WIDTH - 1 downto 0) := (others => '0');
 
     -- Render mapping
     signal s_render_col : unsigned(C_CANVAS_W_BITS - 1 downto 0) := (others => '0');
@@ -480,9 +481,20 @@ begin
         end if;
     end process p_bram_write;
 
-    -- Stage 0: input register + BRAM read (merged for alignment)
+    -- BRAM read: dedicated process for yosys inference (howler pattern)
+    p_bram_read : process(clk)
+    begin
+        if rising_edge(clk) then
+            s_rd_data <= bram_canvas(to_integer(s_rd_addr));
+        end if;
+    end process p_bram_read;
+
+    -- BRAM read address: combinational from render coords
+    s_rd_addr <= resize(s_render_col, C_BRAM_DEPTH - C_CANVAS_H_BITS)
+               & s_render_row;
+
+    -- Stage 0: input register
     p_stage0 : process(clk)
-        variable v_rd_addr : unsigned(C_BRAM_DEPTH - 1 downto 0);
     begin
         if rising_edge(clk) then
             s0_y   <= unsigned(data_in.y);
@@ -490,10 +502,6 @@ begin
             s0_v   <= unsigned(data_in.v);
             s0_col <= s_render_col;
             s0_row <= s_render_row;
-            -- BRAM read aligned with input data
-            v_rd_addr := resize(s_render_col, C_BRAM_DEPTH - C_CANVAS_H_BITS)
-                       & s_render_row;
-            s0_rd_data <= bram_canvas(to_integer(v_rd_addr));
         end if;
     end process p_stage0;
 
@@ -501,7 +509,7 @@ begin
     p_stage1 : process(clk)
     begin
         if rising_edge(clk) then
-            if s0_rd_data /= C_CLEAR_VAL then
+            if s_rd_data /= C_CLEAR_VAL then
                 s1_drawn <= '1';
             else
                 s1_drawn <= '0';

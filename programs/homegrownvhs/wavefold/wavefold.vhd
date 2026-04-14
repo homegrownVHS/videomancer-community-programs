@@ -44,6 +44,7 @@
 --   Total: 9 clocks
 --
 -- Submodules:
+--   variable_filter_s x3: 1st-order IIR LPF on input video, 1 cycle (combinational output)
 --   sin_cos_full_lut_10x10 x3: sine lookup, combinational
 --   interpolator_u x3: linear blend for dry/wet mix, 4 clocks each
 --
@@ -52,7 +53,7 @@
 --   Pot 2  (registers_in(1)):   Phase (0-360 degrees)
 --   Pot 3  (registers_in(2)):   Symmetry (DC offset before fold, center=none)
 --   Pot 4  (registers_in(3)):   Chroma Offset (chroma freq offset, center=same)
---   Pot 5  (registers_in(4)):   Chroma Phase (extra chroma phase, center=same)
+--   Pot 5  (registers_in(4)):   Smoothing (LPF cutoff on source video, 0=off)
 --   Pot 6  (registers_in(5)):   Brightness (post-fold Y offset, center=none)
 --   Tog 7  (registers_in(6)(0)): Shape bit 0 (00=Tri,01=Sin,10=Saw,11=Sqr)
 --   Tog 8  (registers_in(6)(1)): Shape bit 1
@@ -93,7 +94,7 @@ architecture wavefold of program_top is
     signal r_phase           : unsigned(9 downto 0) := (others => '0');
     signal r_symmetry        : unsigned(9 downto 0) := to_unsigned(512, 10);
     signal r_chroma_offset   : unsigned(9 downto 0) := to_unsigned(512, 10);
-    signal r_chroma_phase    : unsigned(9 downto 0) := to_unsigned(512, 10);
+    signal r_smoothing       : unsigned(7 downto 0) := (others => '0');
     signal r_brightness      : unsigned(9 downto 0) := to_unsigned(512, 10);
     signal r_shape           : std_logic_vector(1 downto 0) := "00";
     signal r_rgb_mode        : std_logic := '0';
@@ -156,6 +157,17 @@ architecture wavefold of program_top is
     signal s_mix_v        : unsigned(9 downto 0);
     signal s_mix_y_valid  : std_logic;
 
+    -- LPF filter signals (signed 11-bit to hold 0-1023 unsigned range)
+    signal s_filt_in_y  : signed(10 downto 0);
+    signal s_filt_in_u  : signed(10 downto 0);
+    signal s_filt_in_v  : signed(10 downto 0);
+    signal s_filt_lp_y  : signed(10 downto 0);
+    signal s_filt_lp_u  : signed(10 downto 0);
+    signal s_filt_lp_v  : signed(10 downto 0);
+    signal s_src_y      : unsigned(9 downto 0);
+    signal s_src_u      : unsigned(9 downto 0);
+    signal s_src_v      : unsigned(9 downto 0);
+
 begin
 
     -- Bypass and mix are NOT latched (need immediate response)
@@ -163,12 +175,48 @@ begin
     s_mix    <= unsigned(registers_in(7)(9 downto 0));
 
     -- =========================================================================
+    -- Input LPF: variable_filter_s on each channel (combinational output)
+    -- =========================================================================
+    s_filt_in_y <= signed(resize(unsigned(data_in.y), 11));
+    s_filt_in_u <= signed(resize(unsigned(data_in.u), 11));
+    s_filt_in_v <= signed(resize(unsigned(data_in.v), 11));
+
+    u_filt_y : entity work.variable_filter_s
+        generic map (G_WIDTH => 11)
+        port map (clk => clk, enable => data_in.avid,
+                  a => s_filt_in_y, cutoff => r_smoothing,
+                  low_pass => s_filt_lp_y, high_pass => open, valid => open);
+
+    u_filt_u : entity work.variable_filter_s
+        generic map (G_WIDTH => 11)
+        port map (clk => clk, enable => data_in.avid,
+                  a => s_filt_in_u, cutoff => r_smoothing,
+                  low_pass => s_filt_lp_u, high_pass => open, valid => open);
+
+    u_filt_v : entity work.variable_filter_s
+        generic map (G_WIDTH => 11)
+        port map (clk => clk, enable => data_in.avid,
+                  a => s_filt_in_v, cutoff => r_smoothing,
+                  low_pass => s_filt_lp_v, high_pass => open, valid => open);
+
+    -- Clamp filter output to 0-1023 unsigned
+    s_src_y <= (others => '0') when s_filt_lp_y < 0 else
+               to_unsigned(1023, 10) when s_filt_lp_y > 1023 else
+               unsigned(s_filt_lp_y(9 downto 0));
+    s_src_u <= (others => '0') when s_filt_lp_u < 0 else
+               to_unsigned(1023, 10) when s_filt_lp_u > 1023 else
+               unsigned(s_filt_lp_u(9 downto 0));
+    s_src_v <= (others => '0') when s_filt_lp_v < 0 else
+               to_unsigned(1023, 10) when s_filt_lp_v > 1023 else
+               unsigned(s_filt_lp_v(9 downto 0));
+
+    -- =========================================================================
     -- Parameter latch on vsync (prevents mid-frame tearing)
     -- =========================================================================
     p_param_latch : process(clk)
-        variable v_luma_freq_raw : unsigned(7 downto 0);
-        variable v_chroma_off_s  : signed(9 downto 0);
-        variable v_chroma_freq_s : signed(9 downto 0);
+        variable v_luma_freq_wide : unsigned(8 downto 0);  -- 9 bits to avoid overflow
+        variable v_chroma_off_s   : signed(9 downto 0);
+        variable v_chroma_freq_s  : signed(9 downto 0);
     begin
         if rising_edge(clk) then
             s_prev_vsync <= data_in.vsync_n;
@@ -177,26 +225,32 @@ begin
                 r_phase         <= unsigned(registers_in(1)(9 downto 0));
                 r_symmetry      <= unsigned(registers_in(2)(9 downto 0));
                 r_chroma_offset <= unsigned(registers_in(3)(9 downto 0));
-                r_chroma_phase  <= unsigned(registers_in(4)(9 downto 0));
+                r_smoothing     <= unsigned(registers_in(4)(9 downto 2));
                 r_brightness    <= unsigned(registers_in(5)(9 downto 0));
                 r_shape         <= registers_in(6)(1) & registers_in(6)(0);
                 r_rgb_mode      <= registers_in(6)(2);
                 r_invert        <= registers_in(6)(3);
 
                 -- Luma frequency factor: (knob >> 2) + 4 = 4..259
-                v_luma_freq_raw := unsigned(registers_in(0)(9 downto 2)) + C_FREQ_OFFSET;
-                r_luma_freq <= v_luma_freq_raw;
+                -- Use 9-bit to avoid overflow, clamp to 255
+                v_luma_freq_wide := resize(unsigned(registers_in(0)(9 downto 2)), 9)
+                                  + resize(C_FREQ_OFFSET, 9);
+                if v_luma_freq_wide > 255 then
+                    r_luma_freq <= to_unsigned(255, 8);
+                else
+                    r_luma_freq <= v_luma_freq_wide(7 downto 0);
+                end if;
 
                 -- Chroma frequency: luma + offset from center
                 -- chroma_knob centered at 512: offset = (chroma_knob >> 1) - 256
                 v_chroma_off_s := signed('0' & registers_in(3)(9 downto 1)) -
                                   to_signed(256, 10);
-                v_chroma_freq_s := signed('0' & std_logic_vector(v_luma_freq_raw)) +
+                v_chroma_freq_s := signed(resize(v_luma_freq_wide, 10)) +
                                    resize(v_chroma_off_s, 10);
                 if v_chroma_freq_s < 4 then
                     r_chroma_freq <= to_unsigned(4, 8);
-                elsif v_chroma_freq_s > 259 then
-                    r_chroma_freq <= to_unsigned(259, 8);
+                elsif v_chroma_freq_s > 255 then
+                    r_chroma_freq <= to_unsigned(255, 8);
                 else
                     r_chroma_freq <= unsigned(v_chroma_freq_s(7 downto 0));
                 end if;
@@ -216,23 +270,23 @@ begin
     begin
         if rising_edge(clk) then
             if r_rgb_mode = '1' then
-                -- Approximate BT.601 YUV -> RGB
-                v_u_s := signed(resize(unsigned(data_in.u), 11)) - to_signed(512, 11);
-                v_v_s := signed(resize(unsigned(data_in.v), 11)) - to_signed(512, 11);
+                -- Approximate BT.601 YUV -> RGB (using filtered source)
+                v_u_s := signed(resize(s_src_u, 11)) - to_signed(512, 11);
+                v_v_s := signed(resize(s_src_v, 11)) - to_signed(512, 11);
 
                 -- R = Y + V_s * ~1.375
-                v_r := signed(resize(unsigned(data_in.y), 12)) +
+                v_r := signed(resize(s_src_y, 12)) +
                        resize(v_v_s, 12) +
                        resize(shift_right(v_v_s, 2), 12) +
                        resize(shift_right(v_v_s, 3), 12);
                 -- G = Y - U_s * ~0.34 - V_s * ~0.69
-                v_g := signed(resize(unsigned(data_in.y), 12)) -
+                v_g := signed(resize(s_src_y, 12)) -
                        resize(shift_right(v_u_s, 2), 12) -
                        resize(shift_right(v_u_s, 4), 12) -
                        resize(shift_right(v_v_s, 1), 12) -
                        resize(shift_right(v_v_s, 3), 12);
                 -- B = Y + U_s * ~1.75
-                v_b := signed(resize(unsigned(data_in.y), 12)) +
+                v_b := signed(resize(s_src_y, 12)) +
                        resize(v_u_s, 12) +
                        resize(shift_right(v_u_s, 1), 12) +
                        resize(shift_right(v_u_s, 2), 12);
@@ -249,9 +303,9 @@ begin
                 elsif v_b > 1023 then s0_ch2 <= to_unsigned(1023, 10);
                 else s0_ch2 <= unsigned(v_b(9 downto 0)); end if;
             else
-                s0_ch0 <= unsigned(data_in.y);
-                s0_ch1 <= unsigned(data_in.u);
-                s0_ch2 <= unsigned(data_in.v);
+                s0_ch0 <= s_src_y;
+                s0_ch1 <= s_src_u;
+                s0_ch2 <= s_src_v;
             end if;
         end if;
     end process p_stage0;
@@ -261,15 +315,13 @@ begin
     -- =========================================================================
     p_stage1 : process(clk)
         variable v_sym : unsigned(9 downto 0);
-        variable v_chr : unsigned(9 downto 0);
     begin
         if rising_edge(clk) then
             v_sym := r_symmetry - to_unsigned(512, 10);
-            v_chr := r_chroma_phase - to_unsigned(512, 10);
 
             s1_ch0 <= s0_ch0 + r_phase + v_sym;
-            s1_ch1 <= s0_ch1 + r_phase + v_sym + v_chr;
-            s1_ch2 <= s0_ch2 + r_phase + v_sym + v_chr;
+            s1_ch1 <= s0_ch1 + r_phase + v_sym;
+            s1_ch2 <= s0_ch2 + r_phase + v_sym;
         end if;
     end process p_stage1;
 
