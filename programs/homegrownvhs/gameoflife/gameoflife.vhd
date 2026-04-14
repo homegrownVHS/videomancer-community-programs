@@ -141,7 +141,8 @@ architecture gameoflife of program_top is
     signal s_prev_reseed   : std_logic := '0';
     signal s_frame_counter : unsigned(5 downto 0) := (others => '0');
     signal s_updating      : std_logic := '0';
-    signal s_seeding       : std_logic := '1';
+    signal s_seeding       : std_logic := '0';
+    signal s_needs_seed    : std_logic := '1';
     signal s_update_col    : unsigned(C_GRID_BITS - 1 downto 0) := (others => '0');
     signal s_update_row    : unsigned(C_GRID_BITS - 1 downto 0) := (others => '0');
 
@@ -436,7 +437,12 @@ begin
                 end if;
 
             elsif s_game_vsync = '1' and data_in.vsync_n = '0' then
-                if s_reseed = '1' and s_prev_reseed = '0' then
+                if s_needs_seed = '1' then
+                    s_seeding    <= '1';
+                    s_needs_seed <= '0';
+                    s_update_col <= (others => '0');
+                    s_update_row <= (others => '0');
+                elsif s_reseed = '1' and s_prev_reseed = '0' then
                     s_seeding    <= '1';
                     s_update_col <= (others => '0');
                     s_update_row <= (others => '0');
