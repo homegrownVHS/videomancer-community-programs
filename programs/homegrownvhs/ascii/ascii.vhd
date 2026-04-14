@@ -135,20 +135,24 @@ architecture ascii of program_top is
     );
 
     ---------------------------------------------------------------------------
-    -- Control signals
+    -- Immediate controls (bypass + mix need instant response)
     ---------------------------------------------------------------------------
-    signal s_block_sel  : unsigned(1 downto 0);  -- Knob 1: block size select
-    signal s_contrast   : unsigned(9 downto 0);  -- Knob 2: luma contrast
-    signal s_fg_hue     : unsigned(9 downto 0);  -- Knob 3: foreground hue
-    signal s_bg_hue     : unsigned(9 downto 0);  -- Knob 4: background hue
-    signal s_brightness : unsigned(9 downto 0);  -- Knob 5: output brightness
-    signal s_threshold  : unsigned(9 downto 0);  -- Knob 6: luma threshold
-    signal s_color_mode : std_logic;             -- Toggle 7: mono / video tint
-    signal s_invert     : std_logic;             -- Toggle 8: invert glyphs
-    signal s_grid       : std_logic;             -- Toggle 9: grid overlay
-    signal s_bold       : std_logic;             -- Toggle 10: bold font
     signal s_bypass     : std_logic;             -- Toggle 11: bypass
     signal s_mix        : unsigned(9 downto 0);  -- Fader: dry/wet
+
+    ---------------------------------------------------------------------------
+    -- Vsync-latched controls (prevents mid-frame tearing / banding)
+    ---------------------------------------------------------------------------
+    signal r_block_sel  : unsigned(1 downto 0)  := "01";
+    signal r_contrast   : unsigned(9 downto 0)  := to_unsigned(512, 10);
+    signal r_fg_hue     : unsigned(9 downto 0)  := to_unsigned(512, 10);
+    signal r_bg_hue     : unsigned(9 downto 0)  := (others => '0');
+    signal r_brightness : unsigned(9 downto 0)  := to_unsigned(512, 10);
+    signal r_threshold  : unsigned(9 downto 0)  := (others => '0');
+    signal r_color_mode : std_logic             := '0';
+    signal r_invert     : std_logic             := '0';
+    signal r_grid       : std_logic             := '0';
+    signal r_bold       : std_logic             := '0';
 
     ---------------------------------------------------------------------------
     -- Block size parameters
@@ -271,6 +275,14 @@ architecture ascii of program_top is
     signal s_interp_valid : std_logic := '0';
 
     ---------------------------------------------------------------------------
+    -- Delayed sync (intermediate signals for all-concurrent data_out)
+    ---------------------------------------------------------------------------
+    signal s_sync_hsync_n : std_logic := '1';
+    signal s_sync_vsync_n : std_logic := '1';
+    signal s_sync_field_n : std_logic := '1';
+    signal s_sync_avid    : std_logic := '0';
+
+    ---------------------------------------------------------------------------
     -- Interpolator outputs
     ---------------------------------------------------------------------------
     signal s_mix_y       : unsigned(9 downto 0);
@@ -280,28 +292,18 @@ architecture ascii of program_top is
 
 begin
     ---------------------------------------------------------------------------
-    -- Register mapping
+    -- Register mapping (bypass + mix are immediate, rest latched on vsync)
     ---------------------------------------------------------------------------
-    s_block_sel  <= unsigned(registers_in(0)(9 downto 8));  -- top 2 bits: 0-3
-    s_contrast   <= unsigned(registers_in(1));
-    s_fg_hue     <= unsigned(registers_in(2));
-    s_bg_hue     <= unsigned(registers_in(3));
-    s_brightness <= unsigned(registers_in(4));
-    s_threshold  <= unsigned(registers_in(5));
-    s_color_mode <= registers_in(6)(0);
-    s_invert     <= registers_in(6)(1);
-    s_grid       <= registers_in(6)(2);
-    s_bold       <= registers_in(6)(3);
-    s_bypass     <= registers_in(6)(4);
-    s_mix        <= unsigned(registers_in(7));
+    s_bypass <= registers_in(6)(4);
+    s_mix    <= unsigned(registers_in(7));
 
     ---------------------------------------------------------------------------
     -- Block size decode (combinational)
     -- sel 0: 4x4,  sel 1: 8x8,  sel 2: 12x12,  sel 3: 16x16
     ---------------------------------------------------------------------------
-    process(s_block_sel)
+    process(r_block_sel)
     begin
-        case s_block_sel is
+        case r_block_sel is
             when "00"   => s_block_size <= to_unsigned(4, 5);
                            s_block_mask <= "0011";
             when "01"   => s_block_size <= to_unsigned(8, 5);
@@ -355,10 +357,21 @@ begin
                 s_line_count <= s_line_count + 1;
             end if;
 
-            -- Start of new frame
+            -- Start of new frame + latch parameters
             if data_in.vsync_n = '0' and s_prev_vsync_n = '1' then
                 s_line_count <= (others => '0');
                 s_local_y    <= (others => '0');
+                -- Latch parameters on vsync (prevents mid-frame tearing)
+                r_block_sel  <= unsigned(registers_in(0)(9 downto 8));
+                r_contrast   <= unsigned(registers_in(1));
+                r_fg_hue     <= unsigned(registers_in(2));
+                r_bg_hue     <= unsigned(registers_in(3));
+                r_brightness <= unsigned(registers_in(4));
+                r_threshold  <= unsigned(registers_in(5));
+                r_color_mode <= registers_in(6)(0);
+                r_invert     <= registers_in(6)(1);
+                r_grid       <= registers_in(6)(2);
+                r_bold       <= registers_in(6)(3);
             end if;
 
             -- Half block size for center detection
@@ -369,7 +382,10 @@ begin
             v_at_center_y := '1' when s_local_y = v_half_block else '0';
 
             -- Sample luma and chroma at block center
-            if v_at_center_x = '1' and v_at_center_y = '1' and data_in.avid = '1' then
+            -- Sample luma and chroma at block center X on every line
+            -- (sampling only at center_y caused banding: s_block_luma was stale
+            -- on all non-center scanlines within a block row)
+            if v_at_center_x = '1' and data_in.avid = '1' then
                 s_block_luma <= unsigned(data_in.y);
                 s_block_u    <= unsigned(data_in.u);
                 s_block_v    <= unsigned(data_in.v);
@@ -377,7 +393,7 @@ begin
 
             -- Pass local coords to next stage (clamped to 0-7 for font lookup)
             -- For block sizes > 8, we tile the 8x8 font within the block
-            case s_block_sel is
+            case r_block_sel is
                 when "00" =>  -- 4px: use top 3 bits of 0-3 range, pad
                     s0_local_x <= s_local_x(2 downto 0);
                     s0_local_y <= s_local_y(2 downto 0);
@@ -419,8 +435,8 @@ begin
             s1_thresh_px_v    <= s0_v;
 
             -- Apply threshold: shift luma so threshold becomes black point
-            if s_block_luma > s_threshold then
-                v_luma_adj := s_block_luma - s_threshold;
+            if s_block_luma > r_threshold then
+                v_luma_adj := s_block_luma - r_threshold;
             else
                 v_luma_adj := (others => '0');
             end if;
@@ -454,7 +470,7 @@ begin
 
             -- Apply contrast: multiply registered threshold-adjusted luma
             -- contrast=512: 1x, contrast=1023: ~2x, contrast=0: black
-            v_contrast_prod := s1_thresh_luma * s_contrast;
+            v_contrast_prod := s1_thresh_luma * r_contrast;
             if v_contrast_prod(19 downto 9) > 1023 then
                 s1a_luma_cont <= to_unsigned(1023, 10);
             else
@@ -494,7 +510,7 @@ begin
             end if;
 
             -- Invert: flip glyph mapping
-            if s_invert = '1' then
+            if r_invert = '1' then
                 v_index := to_unsigned(9, 4) - v_index;
             end if;
 
@@ -529,7 +545,7 @@ begin
             v_col := to_integer(s1_local_x);
 
             -- Select font (normal or bold)
-            if s_bold = '1' then
+            if r_bold = '1' then
                 v_row_data := C_FONT_BOLD(v_gidx)(v_row);
             else
                 v_row_data := C_FONT(v_gidx)(v_row);
@@ -551,7 +567,7 @@ begin
     begin
         if rising_edge(clk) then
             -- Grid overlay: if grid is on and at edge, draw grid line
-            if s_grid = '1' and s2_is_edge = '1' then
+            if r_grid = '1' and s2_is_edge = '1' then
                 v_is_glyph := '1';  -- grid lines render as foreground
             else
                 v_is_glyph := s2_font_pixel;
@@ -580,39 +596,39 @@ begin
         variable v_bright  : unsigned(19 downto 0);
     begin
         if rising_edge(clk) then
-            if s_color_mode = '1' then
+            if r_color_mode = '1' then
                 -- Video-through mode: glyph shapes modulate original video
                 -- FG: video at brightness level, BG: video at bg_hue level
                 if s3_is_glyph = '1' then
-                    v_bright := s3_px_y * s_brightness;
+                    v_bright := s3_px_y * r_brightness;
                     s3b_y <= v_bright(19 downto 10);
                     s3b_u <= s3_px_u;
                     s3b_v <= s3_px_v;
                 else
-                    v_bright := s3_px_y * s_bg_hue;
+                    v_bright := s3_px_y * r_bg_hue;
                     s3b_y <= v_bright(19 downto 10);
                     s3b_u <= s3_px_u;
                     s3b_v <= s3_px_v;
                 end if;
             else
                 -- Classic mono mode: flat FG/BG colors
-                v_fg_y := s_brightness;
-                if s_fg_hue < 64 then
+                v_fg_y := r_brightness;
+                if r_fg_hue < 64 then
                     v_fg_u := to_unsigned(512, 10);
                     v_fg_v := to_unsigned(512, 10);
                 else
-                    v_fg_u := s_fg_hue;
-                    v_fg_v := to_unsigned(1023, 10) - s_fg_hue;
+                    v_fg_u := r_fg_hue;
+                    v_fg_v := to_unsigned(1023, 10) - r_fg_hue;
                 end if;
 
                 v_bg_y := (others => '0');
-                if s_bg_hue < 64 then
+                if r_bg_hue < 64 then
                     v_bg_u := to_unsigned(512, 10);
                     v_bg_v := to_unsigned(512, 10);
                 else
                     v_bg_y := to_unsigned(128, 10);
-                    v_bg_u := s_bg_hue;
-                    v_bg_v := to_unsigned(1023, 10) - s_bg_hue;
+                    v_bg_u := r_bg_hue;
+                    v_bg_v := to_unsigned(1023, 10) - r_bg_hue;
                 end if;
 
                 if s3_is_glyph = '1' then
@@ -737,11 +753,11 @@ begin
             v_u_dry := unsigned(data_in.u) & v_u_dry(0 to C_PROCESSING_DELAY_CLKS - 2);
             v_v_dry := unsigned(data_in.v) & v_v_dry(0 to C_PROCESSING_DELAY_CLKS - 2);
 
-            -- Outputs
-            data_out.hsync_n <= v_hsync_n(C_SYNC_DELAY_CLKS - 1);
-            data_out.vsync_n <= v_vsync_n(C_SYNC_DELAY_CLKS - 1);
-            data_out.field_n <= v_field_n(C_SYNC_DELAY_CLKS - 1);
-            data_out.avid    <= v_avid   (C_SYNC_DELAY_CLKS - 1);
+            -- Outputs (to intermediate signals — data_out driven by concurrent)
+            s_sync_hsync_n <= v_hsync_n(C_SYNC_DELAY_CLKS - 1);
+            s_sync_vsync_n <= v_vsync_n(C_SYNC_DELAY_CLKS - 1);
+            s_sync_field_n <= v_field_n(C_SYNC_DELAY_CLKS - 1);
+            s_sync_avid    <= v_avid   (C_SYNC_DELAY_CLKS - 1);
 
             s_bypass_y <= v_y_bypass(C_SYNC_DELAY_CLKS - 1);
             s_bypass_u <= v_u_bypass(C_SYNC_DELAY_CLKS - 1);
@@ -754,8 +770,13 @@ begin
     end process p_delay;
 
     ---------------------------------------------------------------------------
-    -- Output mux: bypass / processed
+    -- Output mux: all data_out fields driven by concurrent assignments
     ---------------------------------------------------------------------------
+    data_out.hsync_n <= s_sync_hsync_n;
+    data_out.vsync_n <= s_sync_vsync_n;
+    data_out.field_n <= s_sync_field_n;
+    data_out.avid    <= s_sync_avid;
+
     data_out.y <= s_bypass_y when s_bypass = '1' else
                   std_logic_vector(s_mix_y);
 
