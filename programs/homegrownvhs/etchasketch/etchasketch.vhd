@@ -20,25 +20,24 @@
 -- Program Name:        Etch-a-Sketch
 -- Author:              Adam Pflanzer
 -- Overview:
---   Two-knob etch-a-sketch with persistent bitmap canvas stored in BRAM.
---   Canvas is 64x32 pixels (2048 x 10-bit). Stamps cursor position each
---   vsync. BRAM pattern matches howler exactly (separate read/write procs).
+--   Two-knob etch-a-sketch with persistent bitmap canvas stored in registers.
+--   Canvas is 32x16 pixels (512 FFs, 1 bit per cell). Stamps cursor position
+--   each vsync. Register-based storage — no BRAM inference required.
 --
 -- Resources:
---   1 BRAM (10-bit x 2048), ~1500 LUTs
+--   0 BRAM, ~4000 LUTs (register-based canvas)
 --
 -- Pipeline:
---   Stage 0 (input register):         1 clock  -> T+1
---   BRAM read (parallel with stage0): 1 clock  -> T+1
---   Stage 1 (drawn/cursor detect):    1 clock  -> T+2
---   Stage 2 (color output mux):       1 clock  -> T+3
---   interpolator_u x3 (wet/dry mix):  4 clocks -> T+7
+--   Stage 0 (input + row read):        1 clock  -> T+1
+--   Stage 1 (drawn/cursor detect):     1 clock  -> T+2
+--   Stage 2 (color output mux):        1 clock  -> T+3
+--   interpolator_u x3 (wet/dry mix):   4 clocks -> T+7
 --   Total: 7 clocks
 --
 -- Parameters:
 --   Pot 1  (registers_in(0)):   H Position (cursor X)
 --   Pot 2  (registers_in(1)):   V Position (cursor Y)
---   Pot 3  (registers_in(2)):   Brush Size (unused for now)
+--   Pot 3  (registers_in(2)):   Brush Size (unused)
 --   Pot 4  (registers_in(3)):   Draw Color Hue (steps_8)
 --   Pot 5  (registers_in(4)):   Draw Brightness
 --   Tog 7  (registers_in(6)(0)): Mode (Color / Video Reveal)
@@ -66,26 +65,20 @@ architecture etchasketch of program_top is
     constant C_PROCESSING_DELAY_CLKS : integer := 3;
     constant C_SYNC_DELAY_CLKS       : integer := 7;
 
-    -- Canvas dimensions
-    constant C_CANVAS_W_BITS : integer := 6;  -- 64 columns
-    constant C_CANVAS_H_BITS : integer := 5;  -- 32 rows
-    constant C_BRAM_DEPTH    : integer := 11;  -- 2^11 = 2048
+    -- Canvas dimensions (register-based, no BRAM)
+    constant C_CANVAS_W      : integer := 32;
+    constant C_CANVAS_H      : integer := 16;
+    constant C_CANVAS_W_BITS : integer := 5;  -- log2(32)
+    constant C_CANVAS_H_BITS : integer := 4;  -- log2(16)
 
-    -- BRAM: 2048 x 10-bit (howler-style dual-port inference)
-    type t_bram is array(0 to 2**C_BRAM_DEPTH - 1)
-        of std_logic_vector(C_VIDEO_DATA_WIDTH - 1 downto 0);
-    signal bram_canvas : t_bram := (others => (others => '0'));
+    -- Canvas storage: 16 rows x 32 columns, 1 bit per cell (512 FFs)
+    type t_canvas is array(0 to C_CANVAS_H - 1) of std_logic_vector(C_CANVAS_W - 1 downto 0);
+    signal canvas : t_canvas := (others => (others => '0'));
 
-    -- BRAM read port
-    signal s_rd_addr : unsigned(C_BRAM_DEPTH - 1 downto 0) := (others => '0');
-    signal s_rd_data : std_logic_vector(C_VIDEO_DATA_WIDTH - 1 downto 0) := (others => '0');
+    -- Canvas read pipeline (registered row data)
+    signal s_rd_row : std_logic_vector(C_CANVAS_W - 1 downto 0) := (others => '0');
 
-    -- BRAM write port
-    signal s_wr_en   : std_logic := '0';
-    signal s_wr_addr : unsigned(C_BRAM_DEPTH - 1 downto 0) := (others => '0');
-    signal s_wr_data : std_logic_vector(C_VIDEO_DATA_WIDTH - 1 downto 0) := (others => '0');
-
-    -- Parameters (directly wired)
+    -- Parameters
     signal s_cursor_col   : unsigned(C_CANVAS_W_BITS - 1 downto 0);
     signal s_cursor_row   : unsigned(C_CANVAS_H_BITS - 1 downto 0);
     signal s_color_sel    : unsigned(2 downto 0);
@@ -111,10 +104,9 @@ architecture etchasketch of program_top is
     signal s_render_col : unsigned(C_CANVAS_W_BITS - 1 downto 0) := (others => '0');
     signal s_render_row : unsigned(C_CANVAS_H_BITS - 1 downto 0) := (others => '0');
 
-    -- Drawing state
-    signal s_clear_active : std_logic := '1';
-    signal s_clear_addr   : unsigned(C_BRAM_DEPTH - 1 downto 0) := (others => '0');
-    signal s_prev_clear   : std_logic := '0';
+    -- Drawing state (own vsync register to avoid cross-process dependency)
+    signal s_prev_clear    : std_logic := '0';
+    signal s_draw_vsync    : std_logic := '1';
 
     -- Pipeline stage 0
     signal s0_y   : unsigned(9 downto 0) := (others => '0');
@@ -148,7 +140,7 @@ architecture etchasketch of program_top is
     signal s_mix_v        : unsigned(9 downto 0);
     signal s_mix_y_valid  : std_logic;
 
-    -- Sync delay intermediate signals (sabattier/howler pattern)
+    -- Sync delay intermediate signals
     signal s_avid_d    : std_logic;
     signal s_hsync_n_d : std_logic;
     signal s_vsync_n_d : std_logic;
@@ -177,8 +169,8 @@ begin
     -- =========================================================================
     -- Parameter decode (combinational)
     -- =========================================================================
-    s_cursor_col   <= unsigned(registers_in(0)(9 downto 4));   -- 0-63
-    s_cursor_row   <= unsigned(registers_in(1)(9 downto 5));   -- 0-31
+    s_cursor_col   <= unsigned(registers_in(0)(9 downto 5));   -- 0-31
+    s_cursor_row   <= unsigned(registers_in(1)(9 downto 6));   -- 0-15
     s_color_sel    <= unsigned(registers_in(3)(9 downto 7));
     s_draw_bright  <= unsigned(registers_in(4)(9 downto 0));
     s_video_reveal <= registers_in(6)(0);
@@ -252,93 +244,66 @@ begin
     -- Map active pixel to canvas coords (registered)
     -- =========================================================================
     p_render_map : process(clk)
-        variable v_col : unsigned(C_CANVAS_W_BITS - 1 downto 0);
-        variable v_row : unsigned(C_CANVAS_H_BITS - 1 downto 0);
+        variable v_col : unsigned(5 downto 0);  -- 6 bits before clamp
+        variable v_row : unsigned(4 downto 0);  -- 5 bits before clamp
     begin
         if rising_edge(clk) then
+            -- Column: map pixel position to 0-31
             if s_active_width >= to_unsigned(1280, 11) then
-                v_col := s_pixel_col(10 downto 5);
+                v_col := s_pixel_col(10 downto 5);    -- /32, HD
             else
-                v_col := s_pixel_col(9 downto 4);
+                v_col := s_pixel_col(9 downto 4);     -- /16, SD
             end if;
-            if v_col >= 64 then
-                s_render_col <= to_unsigned(63, C_CANVAS_W_BITS);
+            if v_col >= C_CANVAS_W then
+                s_render_col <= to_unsigned(C_CANVAS_W - 1, C_CANVAS_W_BITS);
             else
-                s_render_col <= v_col;
+                s_render_col <= v_col(C_CANVAS_W_BITS - 1 downto 0);
             end if;
 
-            if s_active_lines >= to_unsigned(540, 10) then
-                v_row := s_line_count(9 downto 5);
-            elsif s_active_lines >= to_unsigned(480, 10) then
-                v_row := s_line_count(8 downto 4);
+            -- Row: map line count to 0-15
+            if s_active_lines >= to_unsigned(480, 10) then
+                v_row := s_line_count(9 downto 5);    -- /32, 480+ lines
+            elsif s_active_lines >= to_unsigned(243, 10) then
+                v_row := s_line_count(8 downto 4);    -- /16, NTSC/PAL
             else
-                v_row := s_line_count(7 downto 3);
+                v_row := s_line_count(7 downto 3);    -- /8, fallback
             end if;
-            if v_row >= 32 then
-                s_render_row <= to_unsigned(31, C_CANVAS_H_BITS);
+            if v_row >= C_CANVAS_H then
+                s_render_row <= to_unsigned(C_CANVAS_H - 1, C_CANVAS_H_BITS);
             else
-                s_render_row <= v_row;
+                s_render_row <= v_row(C_CANVAS_H_BITS - 1 downto 0);
             end if;
         end if;
     end process p_render_map;
 
     -- =========================================================================
-    -- BRAM read address (combinational from render coords)
+    -- Canvas row read (registered, same pipeline depth as BRAM read)
     -- =========================================================================
-    s_rd_addr <= resize(s_render_col, C_BRAM_DEPTH - C_CANVAS_H_BITS)
-               & s_render_row;
-
-    -- =========================================================================
-    -- BRAM read: dedicated process (howler pattern, exactly)
-    -- =========================================================================
-    process(clk)
+    p_canvas_read : process(clk)
     begin
         if rising_edge(clk) then
-            s_rd_data <= bram_canvas(to_integer(s_rd_addr));
+            s_rd_row <= canvas(to_integer(s_render_row));
         end if;
-    end process;
+    end process p_canvas_read;
 
     -- =========================================================================
-    -- BRAM write: dedicated process (howler pattern, exactly)
-    -- =========================================================================
-    process(clk)
-    begin
-        if rising_edge(clk) then
-            if s_wr_en = '1' then
-                bram_canvas(to_integer(s_wr_addr)) <= s_wr_data;
-            end if;
-        end if;
-    end process;
-
-    -- =========================================================================
-    -- Drawing: stamp cursor on vsync, clear on toggle
-    -- Very simple - one pixel written per vsync frame.
+    -- Drawing: stamp cursor on vsync, clear on toggle rising edge
+    -- Canvas initialises to all-zero via FF init — no startup sweep needed.
     -- =========================================================================
     p_draw : process(clk)
     begin
         if rising_edge(clk) then
             s_prev_clear <= s_clear;
-            s_wr_en <= '0';
+            s_draw_vsync <= data_in.vsync_n;
 
             if s_clear = '1' and s_prev_clear = '0' then
-                s_clear_active <= '1';
-                s_clear_addr   <= (others => '0');
-            end if;
-
-            if s_clear_active = '1' then
-                s_wr_en   <= '1';
-                s_wr_addr <= s_clear_addr;
-                s_wr_data <= (others => '0');
-                if s_clear_addr = to_unsigned(2047, C_BRAM_DEPTH) then
-                    s_clear_active <= '0';
-                else
-                    s_clear_addr <= s_clear_addr + 1;
-                end if;
-            elsif s_prev_vsync = '1' and data_in.vsync_n = '0' then
-                s_wr_en   <= '1';
-                s_wr_addr <= resize(s_cursor_col, C_BRAM_DEPTH - C_CANVAS_H_BITS)
-                           & s_cursor_row;
-                s_wr_data <= (others => '1');
+                -- Clear entire canvas in one clock (all 512 FFs)
+                for i in 0 to C_CANVAS_H - 1 loop
+                    canvas(i) <= (others => '0');
+                end loop;
+            elsif s_draw_vsync = '1' and data_in.vsync_n = '0' then
+                -- Stamp one pixel at cursor position
+                canvas(to_integer(s_cursor_row))(to_integer(s_cursor_col)) <= '1';
             end if;
         end if;
     end process p_draw;
@@ -358,7 +323,7 @@ begin
     end process p_stage0;
 
     -- =========================================================================
-    -- Stage 1 (T+2): Check BRAM result + cursor detect
+    -- Stage 1 (T+2): Check canvas bit + cursor detect
     -- =========================================================================
     p_stage1 : process(clk)
     begin
@@ -367,12 +332,10 @@ begin
             s1_u <= s0_u;
             s1_v <= s0_v;
 
-            if s_rd_data /= "0000000000" then
-                s1_is_drawn <= '1';
-            else
-                s1_is_drawn <= '0';
-            end if;
+            -- Check if canvas cell is drawn (extract bit from registered row)
+            s1_is_drawn <= s_rd_row(to_integer(s0_col));
 
+            -- Check if current pixel is the cursor
             if s_show_cursor = '1' and
                s0_col = s_cursor_col and s0_row = s_cursor_row then
                 s1_is_cursor <= '1';
