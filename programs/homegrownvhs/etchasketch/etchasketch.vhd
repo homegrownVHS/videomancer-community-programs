@@ -148,6 +148,12 @@ architecture etchasketch of program_top is
     signal s_mix_v        : unsigned(9 downto 0);
     signal s_mix_y_valid  : std_logic;
 
+    -- Sync delay intermediate signals (sabattier/howler pattern)
+    signal s_avid_d    : std_logic;
+    signal s_hsync_n_d : std_logic;
+    signal s_vsync_n_d : std_logic;
+    signal s_field_n_d : std_logic;
+
     -- Color palette (8 entries)
     type t_color is record
         y : unsigned(9 downto 0);
@@ -468,10 +474,10 @@ begin
             v_vsync_n := data_in.vsync_n & v_vsync_n(0 to C_SYNC_DELAY_CLKS - 2);
             v_field_n := data_in.field_n & v_field_n(0 to C_SYNC_DELAY_CLKS - 2);
             v_avid    := data_in.avid    & v_avid   (0 to C_SYNC_DELAY_CLKS - 2);
-            data_out.hsync_n <= v_hsync_n(C_SYNC_DELAY_CLKS - 1);
-            data_out.vsync_n <= v_vsync_n(C_SYNC_DELAY_CLKS - 1);
-            data_out.field_n <= v_field_n(C_SYNC_DELAY_CLKS - 1);
-            data_out.avid    <= v_avid   (C_SYNC_DELAY_CLKS - 1);
+            s_hsync_n_d <= v_hsync_n(C_SYNC_DELAY_CLKS - 1);
+            s_vsync_n_d <= v_vsync_n(C_SYNC_DELAY_CLKS - 1);
+            s_field_n_d <= v_field_n(C_SYNC_DELAY_CLKS - 1);
+            s_avid_d    <= v_avid   (C_SYNC_DELAY_CLKS - 1);
 
             v_y_bypass := data_in.y & v_y_bypass(0 to C_SYNC_DELAY_CLKS - 2);
             v_u_bypass := data_in.u & v_u_bypass(0 to C_SYNC_DELAY_CLKS - 2);
@@ -490,10 +496,15 @@ begin
     end process p_delay;
 
     -- =========================================================================
-    -- Output mux
+    -- Output assignment (ALL concurrent — sabattier/howler pattern)
     -- =========================================================================
     data_out.y <= s_bypass_y when s_bypass = '1' else std_logic_vector(s_mix_y);
     data_out.u <= s_bypass_u when s_bypass = '1' else std_logic_vector(s_mix_u);
     data_out.v <= s_bypass_v when s_bypass = '1' else std_logic_vector(s_mix_v);
+
+    data_out.avid    <= s_avid_d;
+    data_out.hsync_n <= s_hsync_n_d;
+    data_out.vsync_n <= s_vsync_n_d;
+    data_out.field_n <= s_field_n_d;
 
 end architecture etchasketch;
