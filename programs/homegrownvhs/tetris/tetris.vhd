@@ -213,7 +213,9 @@ architecture tetris of program_top is
     signal s_v_active        : integer range 0 to 4095 := 480;
 
     -- Cell size & field geometry
-    signal s_cell_shift   : integer range 0 to 5  := 4;  -- cell size shift (power of 2)
+    signal s_cell_shift   : integer range 0 to 5  := 4;  -- vertical cell size shift (power of 2)
+    signal s_cell_w_shift : integer range 0 to 5  := 4;  -- horizontal cell size shift (power of 2)
+    signal s_cell_w_u     : unsigned(5 downto 0) := to_unsigned(16, 6);
     signal s_field_w       : integer range 0 to 4095 := 160;
     signal s_field_h       : integer range 0 to 4095 := 320;
     signal s_field_x_off   : integer range 0 to 4095 := 280;
@@ -222,6 +224,7 @@ architecture tetris of program_top is
     signal s_next_y_off    : integer range 0 to 4095 := 0;
     signal s_score_x       : integer range 0 to 4095 := 0;
     signal s_score_y_pos   : integer range 0 to 4095 := 0;
+    signal s_digit_h_scale : integer range 1 to 8     := 2;
     signal s_cell_size_u   : unsigned(5 downto 0) := to_unsigned(16, 6);
 
     -- LFSR
@@ -489,15 +492,16 @@ begin
     -- ====================================================================
 
     p_geometry : process(clk)
-        variable v_cell : integer range 1 to 63;
-        variable v_fw   : integer range 0 to 4095;
-        variable v_fh   : integer range 0 to 4095;
+        variable v_cell   : integer range 1 to 63;
+        variable v_cell_w : integer range 1 to 63;
+        variable v_fw     : integer range 0 to 4095;
+        variable v_fh     : integer range 0 to 4095;
     begin
         if rising_edge(clk) then
-            s_h_active <= to_integer(s_measured_h);
-            s_v_active <= to_integer(s_measured_v);
+            s_h_active  <= to_integer(s_measured_h);
+            s_v_active  <= to_integer(s_measured_v);
 
-            -- Square cell size: power of 2 based on v_active
+            -- Vertical cell size: power of 2 based on v_active
             if s_v_active < 300 then
                 v_cell := 8;  s_cell_shift <= 3;
             elsif s_v_active < 600 then
@@ -507,7 +511,20 @@ begin
             end if;
             s_cell_size_u <= to_unsigned(v_cell, 6);
 
-            v_fw := v_cell * C_FIELD_COLS;
+            -- Horizontal cell width: double for interlaced modes
+            -- In interlaced video each field has half the lines, so cells
+            -- appear twice as tall on the display.  Widening the cell by 2x
+            -- compensates and keeps grid squares visually square.
+            if s_timing.is_interlaced = '1' then
+                v_cell_w := v_cell * 2;
+                s_cell_w_shift <= s_cell_shift + 1;
+            else
+                v_cell_w := v_cell;
+                s_cell_w_shift <= s_cell_shift;
+            end if;
+            s_cell_w_u <= to_unsigned(v_cell_w, 6);
+
+            v_fw := v_cell_w * C_FIELD_COLS;
             v_fh := v_cell * C_FIELD_ROWS;
             s_field_w <= v_fw;
             s_field_h <= v_fh;
@@ -515,12 +532,20 @@ begin
             s_field_y_off <= (s_v_active - v_fh) / 2;
 
             -- Next piece box: right of field + 2 cell gap
-            s_next_x_off  <= (s_h_active + v_fw) / 2 + v_cell * 2;
+            s_next_x_off  <= (s_h_active + v_fw) / 2 + v_cell_w * 2;
             s_next_y_off  <= (s_v_active - v_fh) / 2 + v_cell;
 
             -- Score: below next piece box
-            s_score_x     <= (s_h_active + v_fw) / 2 + v_cell * 2;
+            s_score_x     <= (s_h_active + v_fw) / 2 + v_cell_w * 2;
             s_score_y_pos <= (s_v_active - v_fh) / 2 + v_cell * 7;
+
+            -- Digit horizontal scale: double when interlaced to match
+            -- the 2x vertical stretch
+            if s_timing.is_interlaced = '1' then
+                s_digit_h_scale <= C_DIGIT_SCALE * 2;
+            else
+                s_digit_h_scale <= C_DIGIT_SCALE;
+            end if;
         end if;
     end process;
 
@@ -1007,8 +1032,8 @@ begin
             if v_fx >= 0 and v_fx < s_field_w and
                v_fy >= 0 and v_fy < s_field_h then
                 s_stg1_in_field <= '1';
-                -- Column: divide by cell size
-                case s_cell_shift is
+                -- Column: divide by horizontal cell width (power of 2)
+                case s_cell_w_shift is
                     when 3 =>
                         s_stg1_cell_col <= v_fx / 8;
                         s_stg1_cell_px  <= to_unsigned(v_fx mod 8, 6);
@@ -1138,7 +1163,7 @@ begin
                     end if;
                     -- Right edge of field
                     if s_stg1p5_cell_col = C_FIELD_COLS - 1 and
-                       s_stg1p5_cell_px = s_cell_size_u - 1 then
+                       s_stg1p5_cell_px = s_cell_w_u - 1 then
                         s_stg2_grid_line <= '1';
                     end if;
                     -- Bottom edge of field
@@ -1153,17 +1178,17 @@ begin
             v_cell_sz := to_integer(s_cell_size_u);
             v_nfx := to_integer(s_stg1p5_hx) - s_next_x_off;
             v_nfy := to_integer(s_stg1p5_vy) - s_next_y_off;
-            if v_nfx >= 0 and v_nfx < v_cell_sz * 4 and
+            if v_nfx >= 0 and v_nfx < to_integer(s_cell_w_u) * 4 and
                v_nfy >= 0 and v_nfy < v_cell_sz * 4 and
                s_next_en = '1' then
                 s_stg2_in_next <= '1';
-                -- Column: divide by cell size
-                case s_cell_shift is
+                -- Column: divide by horizontal cell width
+                case s_cell_w_shift is
                     when 3 =>  v_nc := v_nfx / 8;
                     when 4 =>  v_nc := v_nfx / 16;
                     when others => v_nc := v_nfx / 32;
                 end case;
-                -- Row: divide by cell size
+                -- Row: divide by vertical cell size
                 case s_cell_shift is
                     when 3 =>  v_nr := v_nfy / 8;
                     when 4 =>  v_nr := v_nfy / 16;
@@ -1286,23 +1311,23 @@ begin
 
                 -- Digit 0 (hundreds)
                 v_dx := v_sx;
-                if v_dx >= 0 and v_dx < C_DIGIT_W * C_DIGIT_SCALE then
+                if v_dx >= 0 and v_dx < C_DIGIT_W * s_digit_h_scale then
                     s_stg4a_in_d0 <= '1';
-                    s_stg4a_fc0   <= v_dx / C_DIGIT_SCALE;
+                    s_stg4a_fc0   <= v_dx / s_digit_h_scale;
                 end if;
 
                 -- Digit 1 (tens)
-                v_dx := v_sx - (C_DIGIT_W + 1) * C_DIGIT_SCALE;
-                if v_dx >= 0 and v_dx < C_DIGIT_W * C_DIGIT_SCALE then
+                v_dx := v_sx - (C_DIGIT_W + 1) * s_digit_h_scale;
+                if v_dx >= 0 and v_dx < C_DIGIT_W * s_digit_h_scale then
                     s_stg4a_in_d1 <= '1';
-                    s_stg4a_fc1   <= v_dx / C_DIGIT_SCALE;
+                    s_stg4a_fc1   <= v_dx / s_digit_h_scale;
                 end if;
 
                 -- Digit 2 (ones)
-                v_dx := v_sx - 2 * (C_DIGIT_W + 1) * C_DIGIT_SCALE;
-                if v_dx >= 0 and v_dx < C_DIGIT_W * C_DIGIT_SCALE then
+                v_dx := v_sx - 2 * (C_DIGIT_W + 1) * s_digit_h_scale;
+                if v_dx >= 0 and v_dx < C_DIGIT_W * s_digit_h_scale then
                     s_stg4a_in_d2 <= '1';
-                    s_stg4a_fc2   <= v_dx / C_DIGIT_SCALE;
+                    s_stg4a_fc2   <= v_dx / s_digit_h_scale;
                 end if;
 
                 -- Pre-compute font ROM addresses
