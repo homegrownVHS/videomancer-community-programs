@@ -1,11 +1,11 @@
 # Copyright (C) 2026 Adam Pflanzer
 # SPDX-License-Identifier: GPL-3.0-only
 #
-# Chroma Key Program Configuration
+# Pigment Program Configuration
 
 [program]
-program_id = "com.homegrownvhs.chromakey"
-program_name = "Chroma Key"
+program_id = "com.homegrownvhs.pigment"
+program_name = "Pigment"
 program_version = "1.0.0"
 abi_version = ">=1.0,<2.0"
 author = "Adam Pflanzer"

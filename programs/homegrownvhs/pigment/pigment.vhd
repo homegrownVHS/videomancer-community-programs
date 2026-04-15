@@ -1,6 +1,6 @@
 -- Videomancer Community Programs
 -- Copyright (C) 2026 Adam Pflanzer
--- File: chromakey.vhd - Chroma Key Program for Videomancer
+-- File: pigment.vhd - Pigment Program for Videomancer
 -- License: GNU General Public License v3.0
 -- https://github.com/lzxindustries/videomancer-sdk
 --
@@ -17,7 +17,7 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 --
--- Program Name:        Chroma Key
+-- Program Name:        Pigment
 -- Author:              Adam Pflanzer
 -- Overview:
 --   Threshold keyer with selectable key channel (Y, U, V, or UV saturation),
@@ -70,7 +70,7 @@ use work.core_pkg.all;
 use work.video_stream_pkg.all;
 use work.video_timing_pkg.all;
 
-architecture chromakey of program_top is
+architecture pigment of program_top is
     ---------------------------------------------------------------------------
     -- Constants
     ---------------------------------------------------------------------------
@@ -439,4 +439,4 @@ begin
                   std_logic_vector(to_unsigned(512, C_VIDEO_DATA_WIDTH)) when s_key_view = '1' else
                   std_logic_vector(s_keyed_v);
 
-end chromakey;
+end pigment;

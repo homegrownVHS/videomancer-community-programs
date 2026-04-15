@@ -1,6 +1,6 @@
 -- Videomancer SDK - Open source FPGA-based video effects development kit
 -- Copyright (C) 2025 LZX Industries LLC
--- File: ascii.vhd - ASCII Art Program for Videomancer
+-- File: glyph.vhd - Glyph Program for Videomancer
 -- License: GNU General Public License v3.0
 -- https://github.com/lzxindustries/videomancer-sdk
 --
@@ -17,7 +17,7 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 --
--- Program Name:        ASCII Art
+-- Program Name:        Glyph
 -- Author:              Adam Pflanzer
 -- Overview:
 --   Converts input video into ASCII-art style rendering. Divides the frame
@@ -77,7 +77,7 @@ use work.core_pkg.all;
 use work.video_stream_pkg.all;
 use work.video_timing_pkg.all;
 
-architecture ascii of program_top is
+architecture glyph of program_top is
     ---------------------------------------------------------------------------
     -- Constants
     ---------------------------------------------------------------------------
@@ -786,4 +786,4 @@ begin
     data_out.v <= s_bypass_v when s_bypass = '1' else
                   std_logic_vector(s_mix_v);
 
-end architecture ascii;
+end architecture glyph;

@@ -1,8 +1,8 @@
 [program]
-program_id = "com.homegrownvhs.ascii"
+program_id = "com.homegrownvhs.glyph"
 program_version = "1.0.0"
 abi_version = ">=1.0,<2.0"
-program_name = "ASCII Art"
+program_name = "Glyph"
 author = "Adam Pflanzer"
 license = "GPL-3.0"
 categories = ["Text", "Pixel", "Computer"]

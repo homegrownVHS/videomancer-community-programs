@@ -1,8 +1,8 @@
 [program]
-program_id = "com.homegrownvhs.wavefold"
+program_id = "com.homegrownvhs.wrinkle"
 program_version = "2.1.0"
 abi_version = ">=1.0,<2.0"
-program_name = "Wavefold"
+program_name = "Wrinkle"
 author = "homegrownvhs"
 license = "GPL-3.0"
 categories = ["Color", "Curve", "Signal"]

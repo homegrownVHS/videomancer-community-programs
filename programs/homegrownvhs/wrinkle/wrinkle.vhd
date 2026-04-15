@@ -1,6 +1,6 @@
 -- Videomancer SDK - Open source FPGA-based video effects development kit
 -- Copyright (C) 2025 LZX Industries LLC
--- File: wavefold.vhd - Wavefolder for Videomancer
+-- File: wrinkle.vhd - Wrinkle for Videomancer
 -- License: GNU General Public License v3.0
 -- https://github.com/lzxindustries/videomancer-sdk
 --
@@ -17,7 +17,7 @@
 -- You should have received a copy of the GNU General Public License
 -- along with this program. If not, see <https://www.gnu.org/licenses/>.
 --
--- Program Name:        Wavefold
+-- Program Name:        Wrinkle
 -- Author:              Adam Pflanzer
 -- Overview:
 --   Per-channel wavefolding effect with selectable waveform shape, continuous
@@ -78,7 +78,7 @@ use work.core_pkg.all;
 use work.video_stream_pkg.all;
 use work.video_timing_pkg.all;
 
-architecture wavefold of program_top is
+architecture wrinkle of program_top is
 
     constant C_VIDEO_DATA_WIDTH      : integer := 10;
     constant C_PROCESSING_DELAY_CLKS : integer := 5;
@@ -693,4 +693,4 @@ begin
     data_out.u <= s_bypass_u when s_bypass = '1' else std_logic_vector(s_mix_u);
     data_out.v <= s_bypass_v when s_bypass = '1' else std_logic_vector(s_mix_v);
 
-end architecture wavefold;
+end architecture wrinkle;
