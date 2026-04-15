@@ -108,3 +108,54 @@ initial_value = 1023
 display_min_value = 0
 display_max_value = 100
 suffix_label = "%"
+
+# --- Presets ---
+
+[[preset]]
+name = "Terminal"
+rotary_potentiometer_1 = 256
+rotary_potentiometer_2 = 600
+rotary_potentiometer_3 = 341
+rotary_potentiometer_4 = 0
+rotary_potentiometer_5 = 900
+rotary_potentiometer_6 = 0
+
+[[preset]]
+name = "Typewriter"
+rotary_potentiometer_1 = 512
+rotary_potentiometer_2 = 700
+rotary_potentiometer_3 = 0
+rotary_potentiometer_4 = 900
+rotary_potentiometer_5 = 1023
+rotary_potentiometer_6 = 0
+toggle_switch_8 = 1
+
+[[preset]]
+name = "Matrix"
+rotary_potentiometer_1 = 128
+rotary_potentiometer_2 = 800
+rotary_potentiometer_3 = 341
+rotary_potentiometer_4 = 0
+rotary_potentiometer_5 = 700
+rotary_potentiometer_6 = 300
+toggle_switch_10 = 1
+
+[[preset]]
+name = "Mosaic"
+rotary_potentiometer_1 = 768
+rotary_potentiometer_2 = 512
+rotary_potentiometer_3 = 0
+rotary_potentiometer_4 = 0
+rotary_potentiometer_5 = 900
+rotary_potentiometer_6 = 0
+toggle_switch_7 = 1
+
+[[preset]]
+name = "Blueprint"
+rotary_potentiometer_1 = 384
+rotary_potentiometer_2 = 600
+rotary_potentiometer_3 = 682
+rotary_potentiometer_4 = 100
+rotary_potentiometer_5 = 800
+rotary_potentiometer_6 = 0
+toggle_switch_9 = 1

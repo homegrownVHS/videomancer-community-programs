@@ -119,3 +119,53 @@ display_max_value = 100
 initial_value = 1023
 display_float_digits = 1
 suffix_label = "%"
+
+# --- Presets ---
+
+[[preset]]
+name = "Green Screen"
+rotary_potentiometer_1 = 512
+rotary_potentiometer_2 = 256
+rotary_potentiometer_3 = 384
+rotary_potentiometer_4 = 0
+rotary_potentiometer_5 = 512
+rotary_potentiometer_6 = 512
+toggle_switch_9 = 1
+
+[[preset]]
+name = "Luma Key"
+rotary_potentiometer_1 = 0
+rotary_potentiometer_2 = 200
+rotary_potentiometer_3 = 512
+rotary_potentiometer_4 = 0
+rotary_potentiometer_5 = 512
+rotary_potentiometer_6 = 512
+
+[[preset]]
+name = "Blue Fill"
+rotary_potentiometer_1 = 512
+rotary_potentiometer_2 = 400
+rotary_potentiometer_3 = 384
+rotary_potentiometer_4 = 200
+rotary_potentiometer_5 = 800
+rotary_potentiometer_6 = 200
+toggle_switch_9 = 0
+
+[[preset]]
+name = "Hard Cut"
+rotary_potentiometer_1 = 0
+rotary_potentiometer_2 = 512
+rotary_potentiometer_3 = 0
+rotary_potentiometer_4 = 0
+rotary_potentiometer_5 = 512
+rotary_potentiometer_6 = 512
+
+[[preset]]
+name = "Soft Matte"
+rotary_potentiometer_1 = 256
+rotary_potentiometer_2 = 400
+rotary_potentiometer_3 = 768
+rotary_potentiometer_4 = 0
+rotary_potentiometer_5 = 512
+rotary_potentiometer_6 = 512
+toggle_switch_8 = 1

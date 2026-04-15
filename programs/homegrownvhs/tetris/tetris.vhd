@@ -213,9 +213,7 @@ architecture tetris of program_top is
     signal s_v_active        : integer range 0 to 4095 := 480;
 
     -- Cell size & field geometry
-    signal s_cell_shift   : integer range 0 to 5  := 4;  -- vertical cell height shift
-    signal s_cell_w_shift  : integer range 0 to 6  := 5;  -- horizontal cell width shift
-    signal s_cell_w        : unsigned(6 downto 0) := to_unsigned(32, 7);  -- horizontal cell width
+    signal s_cell_shift   : integer range 0 to 5  := 4;  -- cell size shift (power of 2)
     signal s_field_w       : integer range 0 to 4095 := 160;
     signal s_field_h       : integer range 0 to 4095 := 320;
     signal s_field_x_off   : integer range 0 to 4095 := 280;
@@ -491,47 +489,38 @@ begin
     -- ====================================================================
 
     p_geometry : process(clk)
-        variable v_cell_h : integer range 1 to 63;
-        variable v_cell_w : integer range 1 to 127;
-        variable v_fw     : integer range 0 to 4095;
-        variable v_fh     : integer range 0 to 4095;
+        variable v_cell : integer range 1 to 63;
+        variable v_fw   : integer range 0 to 4095;
+        variable v_fh   : integer range 0 to 4095;
     begin
         if rising_edge(clk) then
             s_h_active <= to_integer(s_measured_h);
             s_v_active <= to_integer(s_measured_v);
 
-            -- Vertical cell height: power of 2 based on v_active
+            -- Square cell size: power of 2 based on v_active
             if s_v_active < 300 then
-                v_cell_h := 8;  s_cell_shift <= 3;
+                v_cell := 8;  s_cell_shift <= 3;
             elsif s_v_active < 600 then
-                v_cell_h := 16; s_cell_shift <= 4;
+                v_cell := 16; s_cell_shift <= 4;
             else
-                v_cell_h := 32; s_cell_shift <= 5;
+                v_cell := 32; s_cell_shift <= 5;
             end if;
-            s_cell_size_u <= to_unsigned(v_cell_h, 6);
+            s_cell_size_u <= to_unsigned(v_cell, 6);
 
-            -- Horizontal cell width: wider on SD (4:3) to fill screen
-            if s_h_active > 1000 then
-                v_cell_w := 64; s_cell_w_shift <= 6;   -- HD (1280 or 1920)
-            else
-                v_cell_w := 32; s_cell_w_shift <= 5;   -- SD (720 wide)
-            end if;
-            s_cell_w <= to_unsigned(v_cell_w, 7);
-
-            v_fw := v_cell_w * C_FIELD_COLS;
-            v_fh := v_cell_h * C_FIELD_ROWS;
+            v_fw := v_cell * C_FIELD_COLS;
+            v_fh := v_cell * C_FIELD_ROWS;
             s_field_w <= v_fw;
             s_field_h <= v_fh;
             s_field_x_off <= (s_h_active - v_fw) / 2;
             s_field_y_off <= (s_v_active - v_fh) / 2;
 
-            -- Next piece box: right of field + 2 cell_w gap
-            s_next_x_off  <= (s_h_active + v_fw) / 2 + v_cell_w * 2;
-            s_next_y_off  <= (s_v_active - v_fh) / 2 + v_cell_h;
+            -- Next piece box: right of field + 2 cell gap
+            s_next_x_off  <= (s_h_active + v_fw) / 2 + v_cell * 2;
+            s_next_y_off  <= (s_v_active - v_fh) / 2 + v_cell;
 
             -- Score: below next piece box
-            s_score_x     <= (s_h_active + v_fw) / 2 + v_cell_w * 2;
-            s_score_y_pos <= (s_v_active - v_fh) / 2 + v_cell_h * 7;
+            s_score_x     <= (s_h_active + v_fw) / 2 + v_cell * 2;
+            s_score_y_pos <= (s_v_active - v_fh) / 2 + v_cell * 7;
         end if;
     end process;
 
@@ -1018,16 +1007,19 @@ begin
             if v_fx >= 0 and v_fx < s_field_w and
                v_fy >= 0 and v_fy < s_field_h then
                 s_stg1_in_field <= '1';
-                -- Column: divide by horizontal cell width
-                case s_cell_w_shift is
-                    when 5 =>
+                -- Column: divide by cell size
+                case s_cell_shift is
+                    when 3 =>
+                        s_stg1_cell_col <= v_fx / 8;
+                        s_stg1_cell_px  <= to_unsigned(v_fx mod 8, 6);
+                    when 4 =>
+                        s_stg1_cell_col <= v_fx / 16;
+                        s_stg1_cell_px  <= to_unsigned(v_fx mod 16, 6);
+                    when others =>
                         s_stg1_cell_col <= v_fx / 32;
                         s_stg1_cell_px  <= to_unsigned(v_fx mod 32, 6);
-                    when others =>
-                        s_stg1_cell_col <= v_fx / 64;
-                        s_stg1_cell_px  <= to_unsigned(v_fx mod 64, 6);
                 end case;
-                -- Row: divide by vertical cell height
+                -- Row: divide by cell size
                 case s_cell_shift is
                     when 3 =>
                         s_stg1_cell_row <= v_fy / 8;
@@ -1146,7 +1138,7 @@ begin
                     end if;
                     -- Right edge of field
                     if s_stg1p5_cell_col = C_FIELD_COLS - 1 and
-                       s_stg1p5_cell_px = s_cell_w - 1 then
+                       s_stg1p5_cell_px = s_cell_size_u - 1 then
                         s_stg2_grid_line <= '1';
                     end if;
                     -- Bottom edge of field
@@ -1161,16 +1153,17 @@ begin
             v_cell_sz := to_integer(s_cell_size_u);
             v_nfx := to_integer(s_stg1p5_hx) - s_next_x_off;
             v_nfy := to_integer(s_stg1p5_vy) - s_next_y_off;
-            if v_nfx >= 0 and v_nfx < to_integer(s_cell_w) * 4 and
+            if v_nfx >= 0 and v_nfx < v_cell_sz * 4 and
                v_nfy >= 0 and v_nfy < v_cell_sz * 4 and
                s_next_en = '1' then
                 s_stg2_in_next <= '1';
-                -- Column: divide by horizontal cell width
-                case s_cell_w_shift is
-                    when 5 =>  v_nc := v_nfx / 32;
-                    when others => v_nc := v_nfx / 64;
+                -- Column: divide by cell size
+                case s_cell_shift is
+                    when 3 =>  v_nc := v_nfx / 8;
+                    when 4 =>  v_nc := v_nfx / 16;
+                    when others => v_nc := v_nfx / 32;
                 end case;
-                -- Row: divide by vertical cell height
+                -- Row: divide by cell size
                 case s_cell_shift is
                     when 3 =>  v_nr := v_nfy / 8;
                     when 4 =>  v_nr := v_nfy / 16;
